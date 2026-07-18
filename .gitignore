@@ -18,6 +18,8 @@ coverage/
 htmlcov/
 playwright-report/
 test-results/
+# Playwright storageState (oturum çerezleri) — asla commit edilmez
+tests/e2e/.auth/
 
 # Python
 __pycache__/

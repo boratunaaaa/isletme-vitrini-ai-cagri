@@ -15,7 +15,18 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
 
-from app.api.routes import auth, calls, campaigns, content, lead_import, leads, live, ops, users
+from app.api.routes import (
+    auth,
+    calls,
+    campaigns,
+    content,
+    lead_import,
+    leads,
+    live,
+    ops,
+    system,
+    users,
+)
 from app.api.routes.internal import router as internal_router
 from app.config import get_settings
 from app.core.logging import configure_logging, request_id_var
@@ -155,6 +166,7 @@ def create_app() -> FastAPI:
     app.include_router(content.router, prefix=api_prefix)
     app.include_router(users.router, prefix=api_prefix)
     app.include_router(live.router, prefix=api_prefix)
+    app.include_router(system.router, prefix=api_prefix)
     app.include_router(internal_router, prefix=api_prefix)
     return app
 

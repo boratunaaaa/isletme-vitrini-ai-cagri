@@ -52,8 +52,8 @@ agent:
 	cd $(AGENT) && uv run python -m agent.main dev
 
 web:
-	@test -f apps/web/package.json || (echo "apps/web henüz Aşama 1 kapsamında oluşturulmadı"; exit 1)
-	pnpm --filter web dev
+	@test -f apps/web/package.json || (echo "apps/web henüz oluşturulmadı"; exit 1)
+	pnpm --filter @ivac/web dev
 
 lint:
 	cd $(API) && uv run ruff check .
