@@ -1,0 +1,12 @@
+[
+  {
+    "business": "Beta Clinic",
+    "phone": "+90 532 765 43 21",
+    "city": "Ankara",
+    "district": "Cankaya",
+    "category": "Health",
+    "google_id": "place-beta",
+    "demo": "https://demo.example/beta",
+    "note": "English headers"
+  }
+]

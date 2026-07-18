@@ -1,0 +1,103 @@
+# Development altyapısı — 8 GB Intel Mac hedefi:
+# Varsayılan yalnız Postgres + Redis. LiveKit + SIP `--profile livekit` ile açılır.
+# API / worker / web lokal süreç olarak koşar (Makefile hedefleri).
+name: ivac-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ivac
+      POSTGRES_PASSWORD: ivac
+      POSTGRES_DB: ivac
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infrastructure/scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ivac -d ivac"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+
+  livekit:
+    image: livekit/livekit-server:latest
+    profiles: ["livekit"]
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./infrastructure/livekit/livekit.dev.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "127.0.0.1:7880:7880"
+      - "127.0.0.1:7881:7881"
+      - "50000-50019:50000-50019/udp"
+    restart: unless-stopped
+
+  livekit-sip:
+    image: livekit/sip:latest
+    profiles: ["livekit"]
+    command: ["--config", "/etc/sip.yaml"]
+    volumes:
+      - ./infrastructure/livekit/sip.dev.yaml:/etc/sip.yaml:ro
+    ports:
+      - "5060:5060/udp"
+      - "10000-10019:10000-10019/udp"
+    depends_on:
+      - livekit
+      - redis
+    restart: unless-stopped
+
+  voice-agent:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/voice-agent.Dockerfile
+    profiles: ["voice"]
+    environment:
+      VOICE_AGENT_ENV: development
+      VOICE_AGENT_NAME: isletme-vitrini-voice-agent
+      INTERNAL_API_BASE_URL: http://api:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      INTERNAL_SERVICE_NAME: voice-agent
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      LIVEKIT_AGENT_NAME: isletme-vitrini-outbound-agent
+      LIVEKIT_SIP_OUTBOUND_TRUNK_ID: ${LIVEKIT_SIP_OUTBOUND_TRUNK_ID:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_REALTIME_DEFAULT_MODEL: ${OPENAI_REALTIME_DEFAULT_MODEL:-gpt-realtime-2.1-mini}
+      OPENAI_REALTIME_DEFAULT_VOICE: ${OPENAI_REALTIME_DEFAULT_VOICE:-marin}
+      HTTP_TIMEOUT_SECONDS: 10
+      HTTP_MAX_RETRIES: 3
+      EVENT_QUEUE_MAX_SIZE: 500
+      TRANSCRIPT_QUEUE_MAX_SIZE: 250
+      USAGE_FLUSH_INTERVAL_SECONDS: 5
+      GRACEFUL_SHUTDOWN_SECONDS: 15
+    command: ["python", "-m", "agent.main", "--check-config"]
+    restart: "no"
+
+volumes:
+  pgdata:
+  redisdata:
