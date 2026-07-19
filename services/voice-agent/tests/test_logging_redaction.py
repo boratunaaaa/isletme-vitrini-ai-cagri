@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import logging
+from collections.abc import Iterator
 
 import httpx
 import pytest
@@ -21,7 +22,7 @@ from agent.logging import configure_logging
 
 
 @pytest.fixture()
-def captured_log() -> tuple[logging.Logger, io.StringIO]:
+def captured_log() -> Iterator[tuple[logging.Logger, io.StringIO]]:
     """Her testte temiz bir root logger + capture stream kurar."""
     root = logging.getLogger()
     for handler in list(root.handlers):

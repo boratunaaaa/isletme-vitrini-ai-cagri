@@ -123,7 +123,11 @@ def _real_settings(**overrides: object) -> VoiceAgentSettings:
         "OPENAI_API_KEY": "sk-test-not-real",
     }
     defaults.update(overrides)
-    return VoiceAgentSettings(**defaults)
+    # `VoiceAgentSettings(**defaults)` `**dict` genişletmesiyle mypy'nin TÜM
+    # alan tiplerine (SecretStr/HttpUrl/float/int dahil) karşı birleştirme
+    # yapmasına yol açıyordu (CODEX_REAUDIT_PHASE_6.md). `model_validate`
+    # aynı doğrulamayı çalıştırır, tip açısından güvenlidir.
+    return VoiceAgentSettings.model_validate(defaults)
 
 
 @pytest.mark.asyncio
@@ -244,3 +248,20 @@ def test_agent_server_entrypoint_constructs_without_network_call() -> None:
     server = build_server(settings)
 
     assert isinstance(server, AgentServer)
+
+
+def test_entrypoint_is_picklable_for_job_process_pool() -> None:
+    """LiveKit job process pool, her job'ı forkserver ile ayrı bir alt
+    süreçte çalıştırmak için entrypoint referansını pickle'lar — bu yalnız
+    modül seviyesinde (closure OLMAYAN) bir fonksiyon için mümkündür.
+    Gerçek Linux Docker container'ında `AttributeError: Can't pickle local
+    object 'build_server.<locals>.entrypoint'` ile ampirik olarak
+    doğrulanmış bir regresyonu önler (bkz. PRODUCTION_INFRA_REPORT.md)."""
+    import pickle
+
+    from agent.job_handler import entrypoint
+
+    dumped = pickle.dumps(entrypoint)
+    restored = pickle.loads(dumped)
+
+    assert restored is entrypoint

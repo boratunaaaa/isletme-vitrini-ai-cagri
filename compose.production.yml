@@ -1,0 +1,437 @@
+# Production stack. Development'tan (docker-compose.dev.yml) KESİN olarak
+# ayrılmıştır — hiçbir bind-mount kaynak kodu, hiçbir --reload, hiçbir host
+# port'u (Caddy hariç) yok.
+#
+# Kullanım: `.env.production` dosyasını `.env.production.example`'dan
+# türetip doldurun, sonra:
+#   docker compose -f compose.production.yml --env-file .env.production config
+#   docker compose -f compose.production.yml --env-file .env.production build
+#   docker compose -f compose.production.yml --env-file .env.production run --rm migrate
+#   docker compose -f compose.production.yml --env-file .env.production up -d
+#
+# Ağ mimarisi (gerçek kod okunarak çıkarıldı — bkz. PRODUCTION_INFRA_REPORT.md §2):
+#   - `data`  (internal:true, internet YOK): postgres, redis, api, worker, beat
+#     Yalnız bu servisler PostgreSQL/Redis'e erişebilir; frontend/caddy/
+#     voice-agent bu ağda DEĞİL.
+#   - `edge`  (normal bridge, internet VAR): caddy, frontend, api, worker,
+#     voice-agent. `worker` burada çünkü `app/tasks/call_tasks.py::place_call`
+#     LiveKit REST API'sine DOĞRUDAN worker sürecinden bağlanıyor (kod
+#     okunarak doğrulandı — `api` süreci yalnız Celery'ye enqueue ediyor,
+#     LiveKit'e kendisi bağlanmıyor). `beat` yalnız zamanlayıcıdır, dışarıya
+#     hiç bağlanmaz — `edge`'de DEĞİL.
+#   - Yalnız `caddy` host'ta port yayınlar (80/443). Diğer hiçbir servis
+#     `ports:` kullanmaz.
+
+name: ivac-production
+
+x-restart-policy: &restart-policy unless-stopped
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  # ─── Veri katmanı (yalnız `data` ağında, internet yok) ──────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: *restart-policy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER zorunlu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD zorunlu}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB zorunlu}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?} -d ${POSTGRES_DB:?}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    logging: *default-logging
+    # İSTİSNA (ampirik olarak doğrulandı — kör varsayım DEĞİL): `cap_drop:
+    # [ALL]` resmi postgres imajının kendi entrypoint'ini KIRDI
+    # ("chmod/chown: Operation not permitted", container crash-loop).
+    # Resmi imaj root olarak başlayıp veri dizininin sahipliğini düzeltip
+    # (`chown`/`chmod`) SONRA `postgres` kullanıcısına düşürüyor — bu, tam
+    # `cap_drop: [ALL]` ile YAPISAL OLARAK uyumsuz. Minimum gereken
+    # capability seti geri eklendi (yalnız bunlar — `cap_drop: [ALL]` hâlâ
+    # temel duruş, üstüne yalnız gerçekten gereken 4 capability açılıyor).
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+    deploy:
+      resources:
+        limits:
+          memory: ${POSTGRES_MEMORY_LIMIT:-1g}
+
+  redis:
+    image: redis:7-alpine
+    restart: *restart-policy
+    command:
+      [
+        "redis-server",
+        "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD zorunlu}",
+        "--maxmemory", "${REDIS_MAXMEMORY:-256mb}",
+        "--maxmemory-policy", "noeviction",
+        "--appendonly", "yes",
+      ]
+    # Healthcheck container İÇİNDE `$REDIS_PASSWORD`'ü okuyabilsin diye
+    # (yalnız `command:`'a gömülü ham parola bunu sağlamaz — ampirik olarak
+    # doğrulandı: bu satır olmadan healthcheck "NOAUTH" ile hep başarısız
+    # kalıyordu).
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD zorunlu}
+    volumes:
+      - redis_data:/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging: *default-logging
+    # İSTİSNA (ampirik doğrulandı, İKİ turda): resmi redis imajı root->redis
+    # kullanıcısına `setpriv`/`setresuid` ile düşüyor VE fresh bir named
+    # volume'ün (`/data`) sahipliğini `chown` ile düzeltiyor — yalnız
+    # SETUID/SETGID yetmedi ("appendonlydir: Permission denied"), CHOWN da
+    # gerekti. Postgres'le aynı minimum set.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: ${REDIS_MEMORY_LIMIT:-320m}
+
+  # ─── Tek seferlik migration (varsayılan `up -d` ile BAŞLAMAZ) ───────────
+  migrate:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    profiles: ["tools"]
+    command: ["alembic", "upgrade", "head"]
+    environment: &api-env
+      APP_ENV: production
+      APP_NAME: isletme-vitrini-ai-cagri
+      APP_URL: ${APP_URL:?APP_URL zorunlu}
+      API_URL: ${API_URL:?API_URL zorunlu}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Istanbul}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS zorunlu (ör. https://panel.example.com)}
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:?TRUSTED_HOSTS zorunlu}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:?}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET zorunlu}
+      COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET zorunlu}
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:?PII_ENCRYPTION_KEY zorunlu}
+      PHONE_HASH_PEPPER: ${PHONE_HASH_PEPPER:?PHONE_HASH_PEPPER zorunlu}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN zorunlu}
+      INTERNAL_SERVICE_TOKEN_PREVIOUS: ${INTERNAL_SERVICE_TOKEN_PREVIOUS:-}
+      INTERNAL_SERVICE_NAME: voice-agent
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      LIVEKIT_SIP_OUTBOUND_TRUNK_ID: ${LIVEKIT_SIP_OUTBOUND_TRUNK_ID:-}
+      LIVEKIT_AGENT_NAME: isletme-vitrini-outbound-agent
+      NETGSM_SIP_HOST: ${NETGSM_SIP_HOST:-sip.netgsm.com.tr}
+      NETGSM_SIP_PORT: ${NETGSM_SIP_PORT:-5060}
+      NETGSM_SIP_USERNAME: ${NETGSM_SIP_USERNAME:-}
+      NETGSM_SIP_PASSWORD: ${NETGSM_SIP_PASSWORD:-}
+      NETGSM_OUTBOUND_NUMBER: ${NETGSM_OUTBOUND_NUMBER:-}
+      NETGSM_TRANSPORT: ${NETGSM_TRANSPORT:-udp}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_REALTIME_DEFAULT_MODEL: ${OPENAI_REALTIME_DEFAULT_MODEL:-gpt-realtime-2.1-mini}
+      OPENAI_REALTIME_DEFAULT_VOICE: ${OPENAI_REALTIME_DEFAULT_VOICE:-marin}
+      GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
+      ENABLE_GOOGLE_PLACES: ${ENABLE_GOOGLE_PLACES:-false}
+      LIVE_CALLS_ENABLED: ${LIVE_CALLS_ENABLED:-false}
+      CAMPAIGNS_ENABLED: ${CAMPAIGNS_ENABLED:-false}
+      TEST_PHONE_ALLOWLIST: ${TEST_PHONE_ALLOWLIST:-}
+      MAX_CONCURRENT_CALLS: ${MAX_CONCURRENT_CALLS:-1}
+      MAX_DAILY_CALLS: ${MAX_DAILY_CALLS:-10}
+      CALL_RECORDING_ENABLED: ${CALL_RECORDING_ENABLED:-false}
+      TRANSCRIPT_STORAGE_ENABLED: ${TRANSCRIPT_STORAGE_ENABLED:-true}
+      TRANSCRIPT_RETENTION_DAYS: ${TRANSCRIPT_RETENTION_DAYS:-30}
+      AUDIO_RETENTION_DAYS: ${AUDIO_RETENTION_DAYS:-0}
+      HUMAN_TRANSFER_ENABLED: ${HUMAN_TRANSFER_ENABLED:-false}
+      HUMAN_TRANSFER_NUMBER: ${HUMAN_TRANSFER_NUMBER:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SESSION_IDLE_SECONDS: ${SESSION_IDLE_SECONDS:-43200}
+      SESSION_ABSOLUTE_SECONDS: ${SESSION_ABSOLUTE_SECONDS:-604800}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [data]
+    logging: *default-logging
+
+  # ─── Backend API (Caddy'den erişilir + DB/Redis'e erişir) ───────────────
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    restart: *restart-policy
+    environment: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [data, edge]
+    logging: *default-logging
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Image'ın kendi HEALTHCHECK'i (services/api/Dockerfile) Host header
+    # göndermeden `127.0.0.1:8000`'e bağlanır — TrustedHostMiddleware
+    # (`TRUSTED_HOSTS` yalnız gerçek domain'i içerir) bunu 400 ile reddeder
+    # (ampirik olarak doğrulandı). Burada override edilerek gerçek
+    # TRUSTED_HOSTS değeriyle Host header gönderilir; app kodu DEĞİŞMEDİ.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request,sys; host=os.environ.get('TRUSTED_HOSTS','127.0.0.1').split(',')[0].strip(); req=urllib.request.Request('http://127.0.0.1:8000/health', headers={'Host': host}); sys.exit(0 if urllib.request.urlopen(req, timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: ${API_MEMORY_LIMIT:-512m}
+
+  # ─── Celery worker (DB/Redis + LiveKit REST — bkz. dosya başı notu) ─────
+  worker:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    restart: *restart-policy
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "-l", "info", "-Q", "default,calls", "--concurrency=${WORKER_CONCURRENCY:-2}"]
+    environment: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [data, edge]
+    logging: *default-logging
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Image'ın kendi HEALTHCHECK'i uvicorn'un 8000 portuna bakar ama worker
+    # HTTP sunucusu ÇALIŞTIRMAZ (yalnız Celery worker) — bu yüzden gerçek
+    # işlevsel bir kontrolle (broker'a bağlı, ping'e cevap veren worker)
+    # override edilir.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.worker.celery_app inspect ping --timeout 5 | grep -q OK"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: ${WORKER_MEMORY_LIMIT:-512m}
+
+  # ─── Celery beat (yalnız zamanlayıcı — TEK replika zorunlu, internet gerekmez) ─
+  beat:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    restart: *restart-policy
+    # `read_only: true` altında beat'in varsayılan `celerybeat-schedule`
+    # dosyasını CWD'ye (`/app`, salt-okunur) yazmaya çalışması "Read-only
+    # file system" ile crash-loop'a yol açıyordu (ampirik olarak doğrulandı)
+    # — schedule/pid dosyaları tmpfs mount'lu `/tmp`'e yönlendirildi. Bu
+    # dosyalar kalıcı OLMAK ZORUNDA değil (yalnız beat'in kendi iç
+    # bookkeeping'i, iş verisi DEĞİL — restart'ta yeniden oluşturulur).
+    command: ["celery", "-A", "app.worker.celery_app", "beat", "-l", "info", "--schedule=/tmp/celerybeat-schedule", "--pidfile=/tmp/celerybeat.pid"]
+    environment: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [data]
+    logging: *default-logging
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Beat yalnız bir zamanlayıcıdır — HTTP/inspect üzerinden sorgulanabilir
+    # bir yüzeyi yok (yalnız worker'lar `celery inspect`'e cevap verir).
+    # En anlamlı gerçek sinyal: kendi pidfile'ının işaret ettiği sürecin
+    # gerçekten canlı olması (bilinçli istisna — PRODUCTION_INFRA_REPORT.md).
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/celerybeat.pid && kill -0 $(cat /tmp/celerybeat.pid)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: ${BEAT_MEMORY_LIMIT:-192m}
+
+  # ─── Voice agent (yalnız DIŞARI bağlanır: api + LiveKit + OpenAI + Netgsm) ─
+  voice-agent:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/voice-agent.Dockerfile
+    restart: *restart-policy
+    environment:
+      VOICE_AGENT_ENV: production
+      VOICE_AGENT_NAME: isletme-vitrini-voice-agent
+      INTERNAL_API_BASE_URL: http://api:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN zorunlu}
+      INTERNAL_SERVICE_NAME: voice-agent
+      LIVEKIT_URL: ${LIVEKIT_URL:?LIVEKIT_URL zorunlu (voice-agent için)}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY zorunlu (voice-agent için)}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET zorunlu (voice-agent için)}
+      LIVEKIT_AGENT_NAME: isletme-vitrini-outbound-agent
+      LIVEKIT_SIP_OUTBOUND_TRUNK_ID: ${LIVEKIT_SIP_OUTBOUND_TRUNK_ID:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY zorunlu (voice-agent için)}
+      OPENAI_REALTIME_DEFAULT_MODEL: ${OPENAI_REALTIME_DEFAULT_MODEL:-gpt-realtime-2.1-mini}
+      OPENAI_REALTIME_DEFAULT_VOICE: ${OPENAI_REALTIME_DEFAULT_VOICE:-marin}
+      HTTP_TIMEOUT_SECONDS: 10
+      HTTP_MAX_RETRIES: 3
+      EVENT_QUEUE_MAX_SIZE: 500
+      TRANSCRIPT_QUEUE_MAX_SIZE: 250
+      USAGE_FLUSH_INTERVAL_SECONDS: 5
+      GRACEFUL_SHUTDOWN_SECONDS: 15
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on: [api]
+    networks: [edge]
+    logging: *default-logging
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: ${VOICE_AGENT_MEMORY_LIMIT:-512m}
+
+  # ─── Frontend (yalnız Caddy'den erişilir) ────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${API_URL:?API_URL zorunlu (build-time)}
+    restart: *restart-policy
+    networks: [edge]
+    logging: *default-logging
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: ${FRONTEND_MEMORY_LIMIT:-256m}
+
+  # ─── Caddy: TEK public giriş noktası (80/443) ────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: *restart-policy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN zorunlu}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL zorunlu (Let's Encrypt bildirimleri için)}
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [frontend, api]
+    networks: [edge]
+    logging: *default-logging
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─── Backup (varsayılan `up -d` ile BAŞLAMAZ — host systemd timer tetikler) ─
+  backup:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/backup.Dockerfile
+    profiles: ["tools"]
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER:?}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      PGDATABASE: ${POSTGRES_DB:?}
+      BACKUP_DIR: /backups
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_REMOTE_ENABLED: ${BACKUP_REMOTE_ENABLED:-false}
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      RESTIC_RETENTION_DAILY: ${RESTIC_RETENTION_DAILY:-14}
+      RESTIC_RETENTION_WEEKLY: ${RESTIC_RETENTION_WEEKLY:-8}
+      RESTIC_RETENTION_MONTHLY: ${RESTIC_RETENTION_MONTHLY:-6}
+    volumes:
+      - postgres_backups:/backups
+    # `data` -> postgres'e erişim için. `edge` -> off-site restic yüklemesi
+    # (S3 vb.) için İNTERNET GEREKİR; `data` ağı `internal:true` olduğundan
+    # tek başına yeterli değildir. BACKUP_REMOTE_ENABLED=false iken `edge`
+    # üyeliği zararsızdır (kullanılmaz).
+    networks: [data, edge]
+    logging: *default-logging
+    # NOT (CODEX_AUDIT_PHASE_6.md ORTA-3): önceden non-root/hardening YOKTU.
+    # `entrypoint.sh` root olarak başlayıp yalnız `/backups` sahipliğini
+    # düzeltir, gerçek script her zaman `postgres` kullanıcısına düşer — bu
+    # yüzden CHOWN/SETUID/SETGID gerekir (postgres/redis servisleriyle aynı
+    # ampirik olarak doğrulanmış desen). `read_only` BİLEREK uygulanmadı:
+    # restic kendi cache dizinine (`$HOME/.cache/restic`) ve `pg_dump`/`gzip`
+    # geçici dosyalarına ihtiyaç duyar, bu tool-profile (kısa ömürlü,
+    # `up -d`'ye dahil olmayan) bir servis olduğu için risk/kazanç dengesi
+    # düşük — istisna bilinçli olarak burada raporlanıyor.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  data:
+    internal: true
+  edge:
+    internal: false
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+  postgres_backups:

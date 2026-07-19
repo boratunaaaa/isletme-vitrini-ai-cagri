@@ -8,6 +8,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agent.errors import ConfigurationError
 
+# NOT (CODEX_AUDIT_PHASE_6.md YÜKSEK-3, CODEX_REAUDIT_PHASE_6.md): `.env.production.example`'daki
+# `REPLACE_ME` değerleri unutulup production'a taşınırsa `missing_runtime_settings()`
+# yalnız "boş mu" kontrol ettiği için bunu YAKALAMAZDI — dolu ama açıkça
+# placeholder bir secret config validasyonunu geçip runtime'da bağlantı
+# hatasına dönüşebilirdi. Backend'in (`app/config.py`) aynı korumasıyla
+# tutarlı bir marker/uzunluk eşiği — marker'lar kanonik (ayraçsız) biçimde
+# tutulur, karşılaştırma öncesi hem değer hem marker'lardan `-`/`_`/boşluk
+# temizlenir (`changeme`/`change-me`/`CHANGE_ME` hepsi aynı kurala uyar).
+# `model_config`'teki `str_strip_whitespace=True` whitespace-only değerleri
+# zaten parse aşamasında `""`e çevirir (backend'de de bu turda eklendi).
+_PLACEHOLDER_MARKERS = ("replaceme", "changeme", "example", "dummy", "yoursecrethere")
+_MIN_SECRET_LENGTH = 20
+
+
+def _normalize_for_placeholder_check(value: str) -> str:
+    """Marker karşılaştırması için ayraçsız/boşluksuz küçük harf biçimi."""
+    return value.lower().replace("-", "").replace("_", "").replace(" ", "")
+
 
 class VoiceAgentSettings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -97,6 +115,12 @@ class VoiceAgentSettings(BaseSettings):
 
     def missing_runtime_settings(self) -> list[str]:
         missing: list[str] = []
+        secret_fields = {
+            "INTERNAL_SERVICE_TOKEN",
+            "LIVEKIT_API_KEY",
+            "LIVEKIT_API_SECRET",
+            "OPENAI_API_KEY",
+        }
         for name in (
             "INTERNAL_SERVICE_TOKEN",
             "LIVEKIT_URL",
@@ -107,8 +131,28 @@ class VoiceAgentSettings(BaseSettings):
         ):
             value = getattr(self, name)
             raw = value.get_secret_value() if isinstance(value, SecretStr) else str(value)
+            # NOT (CODEX_SIGNOFF_PHASE_6.md §15 düşük/hijyen notu): `str_strip_whitespace=True`
+            # ham str/HttpUrl alanlarını parse aşamasında normalize eder, ama
+            # `SecretStr(" "*20)` gibi ÖNCEDEN SARILMIŞ bir değer doğrudan
+            # geçirilirse bu strip UYGULANMAZ (ampirik olarak doğrulandı).
+            # Gerçek env/container yolu her zaman plain string verdiği için
+            # pratik bir production bypass DEĞİL, ama backend'in aynı
+            # `validate_runtime()` desenindeki açık `.strip()` ile tutarlılık
+            # için burada da defense-in-depth olarak uygulanır.
+            raw = raw.strip()
             if not raw:
                 missing.append(name)
+                continue
+            # Placeholder/uzunluk kontrolü yalnız production'da uygulanır —
+            # development'ta kısa test değerleri (`"test-key"` vb.) bilinçli
+            # olarak düşük sürtünmeli tutulur, bu backend'in `is_production`
+            # kapsamıyla tutarlıdır.
+            if self.VOICE_AGENT_ENV == "production" and name in secret_fields:
+                canonical = _normalize_for_placeholder_check(raw)
+                # NOT (CODEX_FINAL_AUDIT_PHASE_6.md ORTA-2): backend'le tutarlı
+                # tam-eşleşme kuralı — substring DEĞİL (bkz. app/config.py).
+                if len(raw) < _MIN_SECRET_LENGTH or canonical in _PLACEHOLDER_MARKERS:
+                    missing.append(f"{name} (zayıf/placeholder değer)")
         return missing
 
     def require_runtime_ready(self) -> None:

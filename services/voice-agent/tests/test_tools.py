@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from agent.errors import ToolExecutionError
-from agent.models import AgentEventType, ToolResponse
+from agent.models import AgentEventType, ToolDefinition, ToolResponse
 from agent.tools import END_CALL_TOOL_NAME, TOOL_DEFINITIONS, ToolExecutor, summarize_tool_result
 
 
@@ -46,17 +46,16 @@ class FakeEvents:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("definition", TOOL_DEFINITIONS)
-async def test_each_tool_calls_expected_backend_endpoint(definition: object) -> None:
-    typed_definition = definition
+async def test_each_tool_calls_expected_backend_endpoint(definition: ToolDefinition) -> None:
     call_id = uuid.uuid4()
     api = FakeAPI()
     events = FakeEvents()
     executor = ToolExecutor(call_id=call_id, api=api, events=events)  # type: ignore[arg-type]
 
-    await executor.execute(typed_definition.name, _arguments_for(typed_definition.name))
+    await executor.execute(definition.name, _arguments_for(definition.name))
 
-    assert api.calls[0][1] == typed_definition.backend_path
-    assert api.calls[0][2]["tool_call_id"].startswith(f"tool-{typed_definition.name}-")
+    assert api.calls[0][1] == definition.backend_path
+    assert api.calls[0][2]["tool_call_id"].startswith(f"tool-{definition.name}-")
     assert events.events == [
         AgentEventType.TOOL_CALL_STARTED,
         AgentEventType.TOOL_CALL_COMPLETED,

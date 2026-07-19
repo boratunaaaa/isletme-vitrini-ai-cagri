@@ -14,7 +14,7 @@ from livekit import agents
 from livekit.agents import AgentServer, JobContext
 
 from agent.api_client import DuplicateConflictError, InternalAPIClient
-from agent.config import VoiceAgentSettings
+from agent.config import VoiceAgentSettings, get_settings
 from agent.errors import (
     CallNotDialableError,
     CompletionError,
@@ -31,6 +31,7 @@ from agent.models import (
     CompletionIn,
     DialPlanResponse,
     DisconnectReason,
+    GenericAcceptedResponse,
     JobMetadata,
 )
 from agent.redaction import safe_error_message
@@ -178,6 +179,22 @@ class SessionEventBridge:
         )
 
 
+class _CompletionAPI(Protocol):
+    """`CompletionGuard.complete_once()`'un GERÇEKTEN ihtiyaç duyduğu yüzey.
+
+    `InternalAPIClient`'ın somut sınıfı yerine yapısal (structural) bir
+    Protocol kullanılır — `complete_once` yalnız `api.complete(...)` çağırır,
+    başka hiçbir üye kullanmaz. Bu, testlerdeki dar test double'larının
+    (`_RecordingAPI`/`_AlwaysFailingAPI` — yalnız `complete()` uygulayan)
+    gerçek `InternalAPIClient`'tan miras almadan veya cast/ignore
+    kullanmadan doğal olarak tip-uyumlu olmasını sağlar; production'da
+    `InternalAPIClient` zaten bu yüzeyi karşılıyor, davranış DEĞİŞMEDİ."""
+
+    async def complete(
+        self, call_id: uuid.UUID, completion: CompletionIn
+    ) -> GenericAcceptedResponse: ...
+
+
 class CompletionGuard:
     """Completion teslimatını tek seferlik VE güvenilir hale getirir.
 
@@ -220,7 +237,7 @@ class CompletionGuard:
     async def complete_once(
         self,
         *,
-        api: InternalAPIClient,
+        api: _CompletionAPI,
         call_id: uuid.UUID,
         started_monotonic: float,
         reason: DisconnectReason,
@@ -480,29 +497,40 @@ class VoiceAgentJobHandler:
         return await usage_sink.report_unavailable(model=model, is_final=True)
 
 
+async def entrypoint(ctx: JobContext) -> None:
+    # NOT (PRODUCTION_INFRA_REPORT.md): bu fonksiyon MUTLAKA modül seviyesinde
+    # (üst düzey, closure OLMAYAN) tanımlanmalı — LiveKit'in job process pool'u
+    # her job'ı ayrı bir alt süreçte (forkserver) çalıştırmak için entrypoint
+    # referansını pickle'lar; `settings`'i closure ile yakalayan iç içe bir
+    # fonksiyon `AttributeError: Can't pickle local object` ile başarısız olur
+    # (gerçek Linux Docker container'ında ampirik olarak doğrulandı — macOS'ta
+    # farklı bir multiprocessing start method kullanıldığı için gizli kalmıştı).
+    # `get_settings()` `@lru_cache`'li olduğu için alt süreç kendi ayarlarını
+    # ortam değişkenlerinden ucuz şekilde yeniden türetir, pickle taşımaya
+    # gerek kalmaz.
+    settings = get_settings()
+    api = InternalAPIClient(settings)
+    try:
+        handler = VoiceAgentJobHandler(
+            settings,
+            RuntimeAdapters(
+                api=api,
+                sip=LiveKitSIPParticipantAdapter(settings),
+                realtime=LiveKitRealtimeSessionAdapter(settings),
+            ),
+        )
+        await handler.handle(ctx)
+    finally:
+        await api.aclose()
+
+
 def build_server(settings: VoiceAgentSettings) -> AgentServer:
     server = AgentServer(
         ws_url=settings.LIVEKIT_URL,
         api_key=settings.LIVEKIT_API_KEY.get_secret_value(),
         api_secret=settings.LIVEKIT_API_SECRET.get_secret_value(),
     )
-
-    @server.rtc_session(agent_name=settings.LIVEKIT_AGENT_NAME)
-    async def entrypoint(ctx: JobContext) -> None:
-        api = InternalAPIClient(settings)
-        try:
-            handler = VoiceAgentJobHandler(
-                settings,
-                RuntimeAdapters(
-                    api=api,
-                    sip=LiveKitSIPParticipantAdapter(settings),
-                    realtime=LiveKitRealtimeSessionAdapter(settings),
-                ),
-            )
-            await handler.handle(ctx)
-        finally:
-            await api.aclose()
-
+    server.rtc_session(entrypoint, agent_name=settings.LIVEKIT_AGENT_NAME)
     return server
 
 

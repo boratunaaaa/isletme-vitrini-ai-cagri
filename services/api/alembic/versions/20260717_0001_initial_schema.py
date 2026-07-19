@@ -7,10 +7,9 @@ Create Date: 2026-07-17 00:01:00.000000
 
 from __future__ import annotations
 
-from alembic import op
-
-from app.db.base import Base
 import app.models  # noqa: F401  # ensure all model tables are registered
+from alembic import op
+from app.db.base import Base
 
 revision = "20260717_0001"
 down_revision = None
@@ -21,7 +20,11 @@ POST_INITIAL_TABLES = {"internal_invocations", "call_transcript_turns"}
 
 
 def _initial_tables():
-    return [table for name, table in Base.metadata.tables.items() if name not in POST_INITIAL_TABLES]
+    return [
+        table
+        for name, table in Base.metadata.tables.items()
+        if name not in POST_INITIAL_TABLES
+    ]
 
 
 def upgrade() -> None:

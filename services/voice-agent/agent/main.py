@@ -25,9 +25,18 @@ def _check_config() -> int:
 
 
 def main() -> int:
+    # NOT (PRODUCTION_INFRA_REPORT.md): `parse_args()` daha önce `dev`/`start`
+    # gibi LiveKit CLI (Typer tabanlı `agents.cli.run_app`) alt komutlarını
+    # "unrecognized arguments" hatasıyla reddediyordu — `python -m agent.main
+    # dev` (Makefile) ve production'da gereken `python -m agent.main start`
+    # ASLA çalışmıyordu (empirik doğrulandı: argparse SystemExit(2)). Bu
+    # yalnızca CLI argüman ayrıştırma düzeltmesidir; konuşma akışı/iş mantığı
+    # değişmedi. `parse_known_args()` yalnız `--check-config`'i tüketir,
+    # kalan argümanlar (`dev`/`start`/vb.) `sys.argv`'e geri konup
+    # `agents.cli.run_app()`'ın kendi Typer ayrıştırıcısına bırakılır.
     parser = argparse.ArgumentParser()
     parser.add_argument("--check-config", action="store_true")
-    args = parser.parse_args()
+    args, remaining = parser.parse_known_args()
     if args.check_config:
         return _check_config()
     settings = get_settings()
@@ -35,6 +44,7 @@ def main() -> int:
     settings.require_runtime_ready()
     from agent.job_handler import run_worker
 
+    sys.argv = [sys.argv[0], *remaining]
     run_worker(settings)
     return 0
 

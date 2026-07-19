@@ -30,6 +30,16 @@ const e2eRoot = path.resolve(__dirname, "../../tests/e2e");
  * spec'lerini (`tests/e2e/specs/*.spec.ts`) görür; Vitest `*.test.ts(x)`
  * dosyaları `testDir` bu dizinin tamamen dışına işaret ettiği için hiç
  * taranmaz bile (testIgnore'a gerek kalmadan yapısal olarak imkânsız).
+ *
+ * NOT (PRODUCTION_INFRA_REPORT.md): Bu dosya `apps/web/tsconfig.json`'un
+ * `exclude` listesinde — `../../tests/e2e/playwright.config` importu
+ * `apps/web` dizini DIŞINA çıkıyor; production Docker build context'i
+ * yalnız `apps/web/`'i içerdiği için (`tests/e2e/` orada YOK) `next build`
+ * bu dosyayı typecheck etmeye çalışırsa "Cannot find module" ile GERÇEKTEN
+ * başarısız oluyordu (build sırasında ampirik olarak doğrulandı). Bu
+ * dosyanın doğruluğu `pnpm exec playwright test --list`/`test:e2e` ile ayrı
+ * doğrulanır — Playwright kendi TS dönüşümünü kullanır, `tsc`'ye ihtiyaç
+ * duymaz.
  */
 const config = {
   ...baseConfig,

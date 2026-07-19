@@ -43,7 +43,15 @@ export class ApiError extends Error {
   }
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// NOT (CODEX_REAUDIT_PHASE_6.md ORTA): `NEXT_PUBLIC_API_URL` sonunda
+// trailing slash ile build edilirse (`https://panel.example.com/`),
+// `${API_BASE_URL}${path}` birleşimi `https://panel.example.com//api/...`
+// üretir — Caddy'nin `path /api/*` matcher'ı bunu eşleştirmeyebilir. Build
+// origin'i her zaman trailing slash'sız normalize edilir.
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(
+  /\/+$/,
+  ""
+);
 const CSRF_COOKIE = "ivac_csrf";
 const CSRF_HEADER = "X-CSRF-Token";
 

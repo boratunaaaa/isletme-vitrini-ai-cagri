@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from pydantic import HttpUrl, SecretStr
 
 from agent.api_client import DuplicateConflictError, InternalAPIClient
 from agent.config import VoiceAgentSettings
@@ -32,8 +33,8 @@ class SequenceTransport(httpx.AsyncBaseTransport):
 
 def settings() -> VoiceAgentSettings:
     return VoiceAgentSettings(
-        INTERNAL_API_BASE_URL="http://internal.test",
-        INTERNAL_SERVICE_TOKEN="internal-token-value",
+        INTERNAL_API_BASE_URL=HttpUrl("http://internal.test"),
+        INTERNAL_SERVICE_TOKEN=SecretStr("internal-token-value"),
         HTTP_MAX_RETRIES=2,
         HTTP_TIMEOUT_SECONDS=1,
     )
@@ -264,8 +265,8 @@ async def test_429_retry_after_capped_at_upper_bound() -> None:
         ]
     )
     tight_settings = VoiceAgentSettings(
-        INTERNAL_API_BASE_URL="http://internal.test",
-        INTERNAL_SERVICE_TOKEN="internal-token-value",
+        INTERNAL_API_BASE_URL=HttpUrl("http://internal.test"),
+        INTERNAL_SERVICE_TOKEN=SecretStr("internal-token-value"),
         HTTP_MAX_RETRIES=2,
         HTTP_TIMEOUT_SECONDS=1,
         HTTP_MAX_RETRY_AFTER_SECONDS=0.05,

@@ -25,9 +25,40 @@ _DEV_SECRET_FIELDS = (
     "INTERNAL_SERVICE_TOKEN",
 )
 
+# NOT (CODEX_AUDIT_PHASE_6.md YÜKSEK-3): `.env.production.example`'daki
+# `REPLACE_ME` değerleri unutulup production'a taşınırsa önceden yalnız
+# "eksik mi" kontrol ediliyordu — "dolu ama açıkça placeholder" değerler
+# fail-fast'i atlatabiliyordu. Bu markerler + minimum uzunluk eşiği,
+# `validate_runtime()` içinde tüm kritik secret'lar için uygulanır. Marker'lar
+# kanonik (ayraçsız) biçimde tutulur; karşılaştırma öncesi hem değer hem
+# marker'lardan `-`/`_`/boşluk temizlenir — böylece `changeme`, `change-me`,
+# `CHANGE_ME`, `change me` gibi TÜM varyantlar tek kural ile yakalanır.
+_PLACEHOLDER_MARKERS = (
+    "replaceme",
+    "changeme",
+    "example",
+    "dummy",
+    "yoursecrethere",
+)
+_MIN_SECRET_LENGTH = 20
+
+
+def _normalize_for_placeholder_check(value: str) -> str:
+    """Marker karşılaştırması için ayraçsız/boşluksuz küçük harf biçimi."""
+    return value.lower().replace("-", "").replace("_", "").replace(" ", "")
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=True)
+    # NOT (CODEX_REAUDIT_PHASE_6.md YÜKSEK-3): `str_strip_whitespace=True`
+    # voice-agent'ın `VoiceAgentSettings`'iyle TUTARLI — whitespace-only bir
+    # env değeri (`"                    "`) pydantic parse aşamasında `""`e
+    # normalize edilir, böylece aşağıdaki `missing`/uzunluk kontrolleri
+    # BAŞTAN doğru çalışır (ayrıca `validate_runtime()` içinde de açıkça
+    # `.strip()` uygulanır — defense-in-depth, bu bayrağa tek başına
+    # güvenilmez).
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", case_sensitive=True, str_strip_whitespace=True
+    )
 
     APP_ENV: str = "development"
     APP_NAME: str = "isletme-vitrini-ai-cagri"
@@ -130,15 +161,43 @@ class Settings(BaseSettings):
         return values or ["localhost", "127.0.0.1"]
 
     def validate_runtime(self) -> None:
-        """Production'da kritik secret eksikse uygulamayı başlatma (fail-fast)."""
-        missing = [f for f in _DEV_SECRET_FIELDS if not getattr(self, f)]
+        """Production'da kritik secret eksikse uygulamayı başlatma (fail-fast).
+
+        NOT (CODEX_REAUDIT_PHASE_6.md YÜKSEK-3): tüm secret değerleri
+        kontrolden ÖNCE `.strip()` ile normalize edilir — yalnız whitespace
+        içeren bir değer (`model_config`'teki `str_strip_whitespace=True`
+        pydantic parse aşamasında bunu zaten `""`e çevirir, ama bu fonksiyon
+        o bayrağa TEK BAŞINA güvenmez, kendi içinde de açıkça strip eder)
+        "dolu" sayılmaz — boşsa `missing` listesine girer, üretim ortamında
+        fail-fast tetiklenir. Python'ın `str.strip()`'i standart ASCII
+        boşluk/tab/newline'ın yanı sıra Unicode non-breaking space
+        (` `) gibi `str.isspace()` TRUE dönen karakterleri de kapsar.
+        """
+        normalized = {f: getattr(self, f).strip() for f in _DEV_SECRET_FIELDS}
+        missing = [f for f in _DEV_SECRET_FIELDS if not normalized[f]]
         if self.is_production:
             if missing:
                 raise RuntimeError(
                     f"Production ortamında eksik zorunlu secret'lar: {', '.join(missing)}"
                 )
+            for field in _DEV_SECRET_FIELDS:
+                value = normalized[field]
+                canonical = _normalize_for_placeholder_check(value)
+                # NOT (CODEX_FINAL_AUDIT_PHASE_6.md ORTA-2): önceden `marker in
+                # canonical` (substring) kullanılıyordu — `prefix-example-<uzun
+                # rastgele değer>` gibi GÜÇLÜ bir secret, içinde yalnızca
+                # "example" GEÇTİĞİ için yanlışlıkla reddediliyordu. Artık
+                # normalize edilmiş değer TAM OLARAK bilinen bir placeholder
+                # marker'a EŞİT olmalı — substring değil, tam eşleşme.
+                if len(value) < _MIN_SECRET_LENGTH or canonical in _PLACEHOLDER_MARKERS:
+                    raise RuntimeError(
+                        f"Production {field} zayıf veya placeholder görünüyor "
+                        f"(en az {_MIN_SECRET_LENGTH} karakter olmalı, yalnız whitespace "
+                        f"OLAMAZ, '{'/'.join(_PLACEHOLDER_MARKERS)}' gibi placeholder "
+                        "kelimeler içeremez)"
+                    )
             for field in ("INTERNAL_SERVICE_TOKEN", "INTERNAL_SERVICE_TOKEN_PREVIOUS"):
-                value = getattr(self, field)
+                value = getattr(self, field).strip()
                 if value and (len(value) < 32 or value.startswith("dev-insecure-")):
                     raise RuntimeError(f"Production {field} zayıf olamaz")
             if "postgresql" not in self.DATABASE_URL:

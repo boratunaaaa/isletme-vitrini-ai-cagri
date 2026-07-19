@@ -3,14 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from agent.errors import CallNotDialableError, SIPParticipantError, SIPTimeoutError
 from agent.job_handler import RuntimeAdapters, VoiceAgentJobHandler, parse_call_id
 from agent.models import AgentEventType, CompletionIn, GenericAcceptedResponse
-from agent.session import FakeRealtimeSessionAdapter
+from agent.session import FakeRealtimeSession, FakeRealtimeSessionAdapter
 from agent.sip import FakeSIPParticipantAdapter
 from tests.factories import bootstrap, dial_plan
 
@@ -390,8 +390,12 @@ async def test_sip_failure_never_starts_realtime_session() -> None:
     await handler.handle(FakeContext(call_id))
 
     assert realtime.runtime is not None  # build() çağrıldı (session var)
-    assert realtime.runtime.session.started is False  # ama hiç start() edilmedi
-    assert realtime.runtime.session.replies == []  # açılış asla söylenmedi
+    # `RealtimeRuntime.session` gerçek SDK `AgentSession` olarak tiplenir,
+    # ama `FakeRealtimeSessionAdapter.build()` her zaman `FakeRealtimeSession`
+    # atar (bkz. agent/session.py) — bu test double'ı bilerek inşa ediyor.
+    fake_session = cast(FakeRealtimeSession, realtime.runtime.session)
+    assert fake_session.started is False  # ama hiç start() edilmedi
+    assert fake_session.replies == []  # açılış asla söylenmedi
 
 
 # ─── Bootstrap başarısızlığı ───────────────────────────────────────────────
@@ -453,7 +457,8 @@ async def test_transcript_turns_captured_from_conversation_items() -> None:
     ctx = FakeContext(call_id)
 
     task = await _run_until_session_started(handler, ctx, realtime)
-    session = realtime.runtime.session  # type: ignore[union-attr]
+    assert realtime.runtime is not None
+    session = cast(FakeRealtimeSession, realtime.runtime.session)
 
     class _FakeChatItem:
         def __init__(self, role: str, text: str, item_id: str) -> None:

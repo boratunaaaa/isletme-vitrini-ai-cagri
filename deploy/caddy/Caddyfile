@@ -1,0 +1,122 @@
+# Production Caddy yapılandırması — İşletme Vitrini AI Çağrı Merkezi.
+#
+# Gerçek route yapısı `services/api/app/main.py` okunarak çıkarıldı:
+#   - `/api/**`           → backend (auth/leads/campaigns/calls/ops/content/
+#                            system/users/live — hepsi `/api` prefix'i altında)
+#   - `/api/internal/**`  → YALNIZ voice-agent→backend dahili contract'ı
+#                            (Bearer INTERNAL_SERVICE_TOKEN korumalı). Bu asla
+#                            public'e açılmaz — voice-agent buna Docker'ın
+#                            internal ağı üzerinden (`http://api:8000/...`)
+#                            erişir, Caddy'den DEĞİL. Burada bilinçli olarak
+#                            403 ile engellenir (defense in depth).
+#   - `/health`, `/ready` → backend, root seviyesinde (prefix YOK)
+#   - `/api/live/events`  → SSE (EventSourceResponse) — buffer/compress
+#                            edilmemeli.
+#   - Diğer her şey       → frontend (Next.js)
+#
+# Yerel doğrulama için `deploy/caddy/Caddyfile.local` kullanın (bkz. o dosya).
+{
+	email {$ACME_EMAIL}
+	# Admin API varsayılan olarak yalnız localhost:2019'da dinler (Caddy
+	# varsayılanı) — container dışına hiç yayınlanmaz (compose'da `ports:`
+	# tanımlı değil), yalnız internal healthcheck bunu kullanır.
+}
+
+{$DOMAIN} {
+	# SSE tek ve sabit bir yoldan sunulur (`/api/live/events`); sıkıştırmayı
+	# bu yol DIŞINDAKİ isteklere uygulamak için REQUEST path matcher'ı
+	# kullanılır (response Content-Type'a göre koşullu `encode ... { match }`
+	# ampirik olarak `http.encoders.skip` diye bir modül YOK — Caddy bunu
+	# reddediyordu, bkz. PRODUCTION_INFRA_REPORT.md).
+	@compressible not path /api/live/events
+	encode @compressible zstd gzip
+
+	# ── Güvenlik header'ları (mevcut frontend'i bozmayacak, makul set) ──
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		X-Frame-Options "DENY"
+		# HSTS yalnız gerçek production HTTPS'te anlamlıdır; Caddy bu domain
+		# bloğu yalnızca gerçek ACME/HTTPS ile eşleştiğinde devrede olur —
+		# `Caddyfile.local` (http://localhost) bu bloğu hiç kullanmaz.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# NOT (PRODUCTION_INFRA_REPORT.md): Tüm route kararları BİLEREK `handle`
+	# bloklarına sarılmıştır. Caddy, isimlendirilmiş matcher'lı ÇIPLAK
+	# (`handle` OLMAYAN) direktifleri (`respond`, `reverse_proxy`) kendi
+	# varsayılan direktif sıralamasına göre yeniden sıralar — bu sıralamada
+	# `handle` (frontend catch-all için kullanılan) ÇIPLAK `respond`/
+	# `reverse_proxy`'den ÖNCE çalışacak şekilde derlenir. Sonuç: `@internal`/
+	# `@health` çıplak bırakılırsa `/health`, `/ready` ve `/api/internal/*`
+	# HİÇBİR ZAMAN backend'e ulaşmaz, sessizce frontend'e (`handle {}`)
+	# düşer — `caddy adapt` çıktısı ile ampirik olarak doğrulandı. `handle`
+	# blokları ise KAYNAK SIRASINA göre, ilk eşleşen kazanır şeklinde
+	# çalışır (Caddy'nin resmi olarak belgelediği davranış) — bu yüzden
+	# aşağıdaki dört `handle` bloğu bilinçli olarak bu sırada yazılmıştır.
+
+	# ── Dahili voice-agent contract'ı: PUBLIC'TEN ASLA erişilmez ──
+	@internal path /api/internal/*
+	handle @internal {
+		respond "internal contract not exposed publicly" 403
+	}
+
+	# ── Backend health/readiness (yalnız gerekli kadar, iç detay sızdırmaz) ──
+	@health path /health /ready
+	handle @health {
+		reverse_proxy api:8000
+	}
+
+	# ── Backend API (SSE dahil — /api/live/events burada, ayrı davranış gerekmez:
+	#    Caddy reverse_proxy varsayılan olarak streaming response'ları buffer
+	#    ETMEZ; yalnız sıkıştırmanın SSE'yi bozmadığından emin oluyoruz) ──
+	@api path /api/*
+	handle @api {
+		reverse_proxy api:8000 {
+			header_up X-Real-IP {remote_host}
+			flush_interval -1
+		}
+	}
+
+	# ── Frontend (Next.js) — geri kalan her şey ──
+	handle {
+		reverse_proxy frontend:3000 {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	# API hata gövdelerini Caddy'nin HTML hata sayfasına ÇEVİRME — backend
+	# zaten JSON `{"detail": ...}` döner, bunu olduğu gibi geçir.
+	handle_errors {
+		respond "{err.status_code}"
+	}
+
+	# NOT (CODEX_AUDIT_PHASE_6.md ORTA-2, CODEX_REAUDIT_PHASE_6.md YÜKSEK
+	# "Cookie/Authorization header redaksiyonu yok"): access log query
+	# string'i VE request/response header'larını olduğu gibi yazıyordu.
+	# Varsayılan Caddy JSON access log formatı `request>headers` objesini
+	# BASAR — oturum çerezi (`Cookie`) veya bearer token (`Authorization`)
+	# taşıyan istekler, redaksiyon olmadan access log'a düşebilirdi. Şimdi
+	# hem query parametreleri hem de bu iki header, response'taki
+	# `Set-Cookie` dahil, loglanmadan önce silinir.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete next
+					delete token
+					delete code
+					delete email
+					delete phone
+				}
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				resp_headers>Set-Cookie delete
+			}
+		}
+	}
+}

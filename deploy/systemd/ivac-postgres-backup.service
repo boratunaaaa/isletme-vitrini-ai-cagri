@@ -1,0 +1,20 @@
+[Unit]
+Description=Isletme Vitrini AI Cagri Merkezi - PostgreSQL production backup
+# DB/Redis'in ayakta olmasını GEREKTIRMEZ (docker compose run kendi ağını
+# kullanır); yalnız Docker daemon'ın hazır olması yeterlidir.
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# NOT: /opt/isletme-vitrini-ai-cagri PLACEHOLDER'dır — gerçek sunucuda repo
+# nereye deploy edildiyse o mutlak yola göre güncelleyin (bkz.
+# docs/production/DEPLOYMENT.md "Backup zamanlama" bölümü).
+WorkingDirectory=/opt/isletme-vitrini-ai-cagri
+ExecStart=/usr/bin/docker compose -f compose.production.yml --env-file .env.production run --rm backup /scripts/postgres-backup.sh
+# Aynı anda ikinci bir çalışmayı systemd seviyesinde de engeller (script
+# içindeki flock'a ek savunma katmanı).
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

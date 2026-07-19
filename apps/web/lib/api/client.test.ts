@@ -85,3 +85,36 @@ describe("apiRequest", () => {
     expect(headers["X-CSRF-Token"]).toBeUndefined();
   });
 });
+
+// CODEX_REAUDIT_PHASE_6.md ORTA: NEXT_PUBLIC_API_URL trailing slash ile
+// build edilirse `${origin}${path}` birleşimi çift slash üretmemeli.
+describe("API_BASE_URL trailing slash normalization", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    vi.unstubAllGlobals();
+  });
+
+  it("strips a single trailing slash from NEXT_PUBLIC_API_URL before building request URLs", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "https://panel.example.com/");
+    vi.resetModules();
+    const { apiRequest: freshApiRequest } = await import("./client");
+    mockFetchOnce({ status: 200, body: { ok: true } });
+    await freshApiRequest("/api/leads", schema);
+    const call = vi.mocked(fetch).mock.calls[0]!;
+    const url = call[0] as string;
+    expect(url).toBe("https://panel.example.com/api/leads");
+    expect(url).not.toContain("//api");
+  });
+
+  it("strips multiple trailing slashes from NEXT_PUBLIC_API_URL", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "https://panel.example.com///");
+    vi.resetModules();
+    const { apiRequest: freshApiRequest } = await import("./client");
+    mockFetchOnce({ status: 200, body: { ok: true } });
+    await freshApiRequest("/api/leads", schema);
+    const call = vi.mocked(fetch).mock.calls[0]!;
+    const url = call[0] as string;
+    expect(url).toBe("https://panel.example.com/api/leads");
+  });
+});

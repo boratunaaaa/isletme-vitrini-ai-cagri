@@ -1,0 +1,79 @@
+# Tüm production Dockerfile'ları build context olarak repo KÖKÜNÜ kullanır
+# (monorepo — pnpm workspace + services/ paylaşımı için gerekli). Bu dosya
+# image'lara girmemesi gereken her şeyi (VCS, test/geliştirme artifact'leri,
+# secret'lar, bağımlılık cache'leri) tek yerden kapsar.
+
+# VCS
+.git/
+.gitignore
+.github/
+
+# Node / pnpm / Next.js
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+.turbo/
+**/.turbo/
+out/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+
+# Python / uv
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.uv-cache/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+.coverage
+.coverage.*
+htmlcov/
+
+# Test/E2E artifact'leri
+coverage/
+playwright-report/
+test-results/
+tests/e2e/.auth/
+tests/e2e/test-results/
+
+# Secret'lar — İMAJA ASLA GİRMEMELİ
+.env
+.env.*
+!.env.example
+!.env.production.example
+!apps/web/.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Data / backups / loglar — imaja girmemeli, volume/host üzerinde kalır
+data/
+uploads/
+recordings/
+transcripts/
+infrastructure/backups/*
+!infrastructure/backups/.gitkeep
+*.log
+logs/
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.sql.gz
+
+# Dokümantasyon ve rapor dosyaları (build'e gerekmez, image boyutunu şişirir)
+*.md
+docs/
+
+# Terraform/OpenTofu (kullanılmıyor, yine de dışlanır)
+*.tfstate
+*.tfstate.*
+.terraform/

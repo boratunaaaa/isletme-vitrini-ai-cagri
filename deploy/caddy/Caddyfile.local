@@ -1,0 +1,100 @@
+# Yerel doğrulama için Caddyfile — GERÇEK production Caddyfile davranışını
+# (ACME/Let's Encrypt akışı) TAKLİT ETMEZ, yalnız reverse-proxy yönlendirme
+# mantığının doğru çalıştığını `localhost` üzerinden test etmek içindir.
+#
+# Kullanım:
+#   docker compose -f compose.production.yml --env-file .env.production \
+#     -f deploy/caddy/compose.local-caddy.override.yml up -d
+# (override dosyası bu Caddyfile'ı gerçek olanın yerine mount eder, DOMAIN
+# yerine `localhost` kullanır, `tls internal` ile Caddy'nin kendi yerel CA'sını
+# kullanarak self-signed HTTPS üretir — tarayıcı sertifika uyarısı normaldir.)
+#
+# HSTS BİLEREK burada YOK — gerçek olmayan/geçici bir sertifikada HSTS
+# zorunlu kılmak, sonraki gerçek HTTPS testlerini veya `http://localhost`
+# üzerinden yapılan taramaları tarayıcı seviyesinde kilitleyebilir.
+
+localhost {
+	tls internal
+
+	@compressible not path /api/live/events
+	encode @compressible zstd gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	# NOT: Tüm route kararları bilerek `handle` bloklarına sarılmıştır —
+	# bkz. `deploy/caddy/Caddyfile` başındaki ayrıntılı gerekçe (çıplak
+	# `respond`/`reverse_proxy` Caddy'nin varsayılan direktif sıralamasında
+	# `handle {}` catch-all'dan SONRA çalışır, hiç eşleşmez).
+	@internal path /api/internal/*
+	handle @internal {
+		respond "internal contract not exposed publicly" 403
+	}
+
+	@health path /health /ready
+	handle @health {
+		reverse_proxy api:8000
+	}
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000 {
+		}
+	}
+
+	# NOT: production Caddyfile'daki aynı redaksiyon kuralları — yerel test
+	# de gerçek davranışı yansıtmalı (bkz. CODEX_REAUDIT_PHASE_6.md).
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					delete next
+					delete token
+					delete code
+					delete email
+					delete phone
+				}
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				resp_headers>Set-Cookie delete
+			}
+		}
+	}
+}
+
+# Düz HTTP üzerinden hızlı curl testi için (sertifika güveni gerektirmez).
+:8080 {
+	@internal path /api/internal/*
+	handle @internal {
+		respond "internal contract not exposed publicly" 403
+	}
+
+	@health path /health /ready
+	handle @health {
+		reverse_proxy api:8000
+	}
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

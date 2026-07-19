@@ -1,0 +1,18 @@
+[Unit]
+Description=Isletme Vitrini AI Cagri Merkezi - gunluk PostgreSQL backup zamanlayicisi
+
+[Timer]
+# Her gun UTC 03:15'te calisir (sunucunun sistem saat dilimi ne olursa
+# olsun UTC'yi acikca belirtiyoruz — backup dosya adlari da UTC kullanir,
+# bkz. scripts/backup/postgres-backup.sh). Sunucu bu saatte kapaliysa
+# Persistent=true sayesinde bir sonraki acilista GECIKMELI calisir (gorev
+# atlanmaz).
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+# Ayni anda birden fazla tetiklenmeyi (ör. sistem saat sicramasi) engellemek
+# icin kucuk bir rastgele gecikme.
+RandomizedDelaySec=300
+Unit=ivac-postgres-backup.service
+
+[Install]
+WantedBy=timers.target

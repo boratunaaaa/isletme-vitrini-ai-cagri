@@ -1,0 +1,23 @@
+# Yerel doğrulama override'ı — GERÇEK production compose'u DEĞİŞTİRMEZ,
+# yalnız `caddy` servisinin Caddyfile mount'unu ve `DOMAIN`'i yerel teste
+# uygun hale getirir (gerçek ACME/Let's Encrypt denenmez).
+#
+# Kullanım:
+#   docker compose -f compose.production.yml --env-file .env.production \
+#     -f deploy/caddy/compose.local-caddy.override.yml up -d
+#
+# Doğrulama: http://localhost:8080 (düz HTTP, sertifika gerekmez) veya
+# https://localhost (Caddy'nin kendi dahili CA'sıyla self-signed — tarayıcı/
+# curl -k sertifika uyarısı BEKLENEN bir durumdur, gerçek bir hata değildir).
+services:
+  caddy:
+    volumes:
+      - ./deploy/caddy/Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "8080:8080"
+      - "443:443"
+    environment:
+      DOMAIN: localhost
+      ACME_EMAIL: test@example.invalid
