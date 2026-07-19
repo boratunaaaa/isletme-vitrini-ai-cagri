@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:docker": "playwright test --config=playwright.docker.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.50.1"
