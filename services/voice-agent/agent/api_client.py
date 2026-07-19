@@ -242,9 +242,7 @@ class InternalAPIClient:
                 raise CallNotDialableError("Call is not dialable.")
             # Sınıflandırılamayan 409 de kalıcıdır — aynı payload'la retry
             # aynı çakışmayı üretir.
-            raise InternalAPIPermanentError(
-                f"Internal API conflict: {error_code or 'unknown'}"
-            )
+            raise InternalAPIPermanentError(f"Internal API conflict: {error_code or 'unknown'}")
         if 400 <= response.status_code < 500:
             error_code = self._error_code(payload)
             if error_code == "CALL_NOT_DIALABLE":

@@ -84,9 +84,7 @@ class ParsedFile:
     sheet_names: list[str] = field(default_factory=list)
 
 
-def parse_file(
-    file: BinaryIO, filename: str, sheet_name: str | None = None
-) -> ParsedFile:
+def parse_file(file: BinaryIO, filename: str, sheet_name: str | None = None) -> ParsedFile:
     lower = filename.lower()
     raw = file.read()
     if lower.endswith(".xlsx") or lower.endswith(".xlsm"):
@@ -109,7 +107,9 @@ def _parse_xlsx(stream: io.BytesIO, sheet_name: str | None) -> ParsedFile:
         header_row = next(iterator)
     except StopIteration as exc:
         raise ValueError("Dosya boş") from exc
-    headers = [str(h).strip() if h is not None else f"Kolon{i+1}" for i, h in enumerate(header_row)]
+    headers = [
+        str(h).strip() if h is not None else f"Kolon{i + 1}" for i, h in enumerate(header_row)
+    ]
     rows: list[dict[str, Any]] = []
     for values in iterator:
         if values is None or all(v is None or str(v).strip() == "" for v in values):
@@ -258,12 +258,9 @@ def commit_import(
                 continue
 
         is_duplicate = (
-            (
-                phone_hash_value
-                and (phone_hash_value in existing_hashes or phone_hash_value in seen_hashes)
-            )
-            or (place_id and (place_id in existing_place_ids or place_id in seen_place_ids))
-        )
+            phone_hash_value
+            and (phone_hash_value in existing_hashes or phone_hash_value in seen_hashes)
+        ) or (place_id and (place_id in existing_place_ids or place_id in seen_place_ids))
         if is_duplicate:
             duplicates += 1
             continue

@@ -87,16 +87,12 @@ def dashboard_stats(
 
     callback_count = int(
         db.scalar(
-            select(func.count(Callback.id)).where(
-                Callback.status.in_(["pending", "scheduled"])
-            )
+            select(func.count(Callback.id)).where(Callback.status.in_(["pending", "scheduled"]))
         )
         or 0
     )
     do_not_call_count = int(
-        db.scalar(
-            select(func.count(Lead.id)).where(Lead.status == LeadStatus.DO_NOT_CALL.value)
-        )
+        db.scalar(select(func.count(Lead.id)).where(Lead.status == LeadStatus.DO_NOT_CALL.value))
         or 0
     )
 
@@ -113,9 +109,7 @@ def dashboard_stats(
 
     active_campaigns = int(
         db.scalar(
-            select(func.count(Campaign.id)).where(
-                Campaign.status == CampaignStatus.RUNNING.value
-            )
+            select(func.count(Campaign.id)).where(Campaign.status == CampaignStatus.RUNNING.value)
         )
         or 0
     )
@@ -227,8 +221,7 @@ def list_settings(
     _: User = Depends(require_permission(Permission.SETTINGS_READ)),
 ) -> list[SettingItem]:
     existing = {
-        (row.provider, row.setting_key): row
-        for row in db.scalars(select(IntegrationSetting)).all()
+        (row.provider, row.setting_key): row for row in db.scalars(select(IntegrationSetting)).all()
     }
     items: list[SettingItem] = []
     for provider, key in sorted(EDITABLE_KEYS):

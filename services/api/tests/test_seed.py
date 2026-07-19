@@ -24,6 +24,9 @@ def test_seed_is_idempotent_and_uses_realtime_models(clean_seed_rows, db_session
 
     assert db_session.scalar(select(func.count(KnowledgeBaseEntry.id))) >= 5
     assert db_session.scalar(select(func.count(AgentPromptVersion.id))) == 1
-    assert db_session.scalar(
-        select(func.count(AgentPromptVersion.id)).where(AgentPromptVersion.is_active.is_(True))
-    ) == 1
+    assert (
+        db_session.scalar(
+            select(func.count(AgentPromptVersion.id)).where(AgentPromptVersion.is_active.is_(True))
+        )
+        == 1
+    )

@@ -64,9 +64,7 @@ def initiate_call(
     """
     # Idempotency: aynı anahtar daha önce işlendiyse mevcut çağrıyı dön
     if idempotency_key:
-        existing = db.scalars(
-            select(Call).where(Call.idempotency_key == idempotency_key)
-        ).first()
+        existing = db.scalars(select(Call).where(Call.idempotency_key == idempotency_key)).first()
         if existing is not None:
             return existing
 
@@ -148,9 +146,7 @@ def build_dial_info(db: Session, call: Call) -> dict[str, Any]:
     if lead is None:
         raise CallPolicyError("lead_missing", "Lead bulunamadı")
     campaign = db.get(Campaign, call.campaign_id) if call.campaign_id else None
-    max_duration = (
-        campaign.max_call_duration_seconds if campaign else s.MAX_CALL_DURATION_SECONDS
-    )
+    max_duration = campaign.max_call_duration_seconds if campaign else s.MAX_CALL_DURATION_SECONDS
     return {
         "call_id": str(call.id),
         "room_name": call.livekit_room_name,

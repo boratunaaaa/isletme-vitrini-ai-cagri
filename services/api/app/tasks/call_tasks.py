@@ -119,9 +119,7 @@ def watchdog_check(call_id: str) -> None:
 def watchdog_sweep() -> None:
     """Emniyet süpürmesi: kuyrukta/aktif durumda takılı kalan çağrılar."""
     settings = get_settings()
-    stale_before = datetime.now(UTC) - timedelta(
-        seconds=settings.MAX_CALL_DURATION_SECONDS + 600
-    )
+    stale_before = datetime.now(UTC) - timedelta(seconds=settings.MAX_CALL_DURATION_SECONDS + 600)
     with session_scope() as db:
         stale_calls = db.scalars(
             select(Call).where(

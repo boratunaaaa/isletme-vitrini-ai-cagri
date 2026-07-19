@@ -1,6 +1,6 @@
 """Celery uygulaması. `services/worker` konteyneri bu modülü çalıştırır:
-  celery -A app.worker.celery_app worker -Q default,calls
-  celery -A app.worker.celery_app beat
+celery -A app.worker.celery_app worker -Q default,calls
+celery -A app.worker.celery_app beat
 """
 
 from __future__ import annotations

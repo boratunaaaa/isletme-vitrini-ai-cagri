@@ -94,7 +94,9 @@ def test_strong_secret_containing_example_substring_is_accepted_in_production() 
     """Önceden substring eşleşmesi nedeniyle içinde yalnızca "example" GEÇEN
     güçlü bir secret yanlışlıkla reddediliyordu (backend'le aynı regresyon)."""
     settings = VoiceAgentSettings.model_validate(
-        _production_kwargs(OPENAI_API_KEY=SecretStr("prod-example-9f8e7d6c5b4a3210fedcba9876543210"))
+        _production_kwargs(
+            OPENAI_API_KEY=SecretStr("prod-example-9f8e7d6c5b4a3210fedcba9876543210")
+        )
     )
     assert settings.missing_runtime_settings() == []
 

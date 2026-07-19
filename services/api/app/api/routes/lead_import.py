@@ -28,9 +28,7 @@ MAX_UPLOAD_BYTES = 30 * 1024 * 1024  # 30 MB
 async def _read_upload(file: UploadFile) -> bytes:
     raw = await file.read()
     if len(raw) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Dosya 30 MB sınırını aşıyor"
-        )
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Dosya 30 MB sınırını aşıyor")
     return raw
 
 

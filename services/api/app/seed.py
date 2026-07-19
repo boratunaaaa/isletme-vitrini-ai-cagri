@@ -178,8 +178,7 @@ def seed_all() -> dict[str, int]:
 def main() -> int:
     counts = seed_all()
     print(
-        "seed complete: "
-        + ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+        "seed complete: " + ", ".join(f"{name}={count}" for name, count in sorted(counts.items()))
     )
     return 0
 

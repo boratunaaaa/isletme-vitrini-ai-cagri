@@ -95,9 +95,7 @@ TERMINAL_CALL_STATUSES: tuple[CallStatus, ...] = (
 # İzin verilen durum geçişleri (state machine)
 CALL_STATUS_TRANSITIONS: dict[CallStatus, frozenset[CallStatus]] = {
     CallStatus.QUEUED: frozenset({CallStatus.PREPARING, CallStatus.CANCELLED, CallStatus.FAILED}),
-    CallStatus.PREPARING: frozenset(
-        {CallStatus.DIALING, CallStatus.CANCELLED, CallStatus.FAILED}
-    ),
+    CallStatus.PREPARING: frozenset({CallStatus.DIALING, CallStatus.CANCELLED, CallStatus.FAILED}),
     CallStatus.DIALING: frozenset(
         {
             CallStatus.RINGING,

@@ -147,10 +147,11 @@ def handle_call_terminal(db: Session, call: Call) -> None:
         campaign_lead.status = CampaignLeadStatus.RETRY_SCHEDULED.value
         campaign_lead.next_attempt_at = next_attempt
     else:
-        exhausted = (
-            call.outcome is None
-            and CallStatus(call.status)
-            in (CallStatus.NO_ANSWER, CallStatus.BUSY, CallStatus.VOICEMAIL, CallStatus.FAILED)
+        exhausted = call.outcome is None and CallStatus(call.status) in (
+            CallStatus.NO_ANSWER,
+            CallStatus.BUSY,
+            CallStatus.VOICEMAIL,
+            CallStatus.FAILED,
         )
         campaign_lead.status = (
             CampaignLeadStatus.EXHAUSTED.value if exhausted else CampaignLeadStatus.COMPLETED.value

@@ -67,9 +67,7 @@ class PlaceResult:
 
 
 class PlacesProvider(Protocol):
-    async def search_text(
-        self, query: str, *, max_results: int = 20
-    ) -> list[PlaceResult]: ...
+    async def search_text(self, query: str, *, max_results: int = 20) -> list[PlaceResult]: ...
 
     async def get_place_details(self, place_id: str) -> PlaceResult | None: ...
 

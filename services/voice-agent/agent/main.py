@@ -16,8 +16,7 @@ def _check_config() -> int:
         raise ConfigurationError("missing production runtime settings: " + ", ".join(missing))
     if missing:
         print(
-            "configuration valid for dry check; runtime credentials missing: "
-            + ", ".join(missing)
+            "configuration valid for dry check; runtime credentials missing: " + ", ".join(missing)
         )
     else:
         print("configuration valid; runtime credentials present")

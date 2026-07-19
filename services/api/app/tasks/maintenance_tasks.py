@@ -26,7 +26,9 @@ def retention_cleanup() -> None:
     with session_scope() as db:
         days = int(
             get_decimal_setting(
-                db, "calls", "transcript_retention_days",
+                db,
+                "calls",
+                "transcript_retention_days",
                 Decimal(settings.TRANSCRIPT_RETENTION_DAYS),
             )
         )

@@ -44,8 +44,7 @@ class GooglePlacesProvider:
         return PlaceResult(
             external_place_id=place.get("id", ""),
             business_name=(place.get("displayName") or {}).get("text", ""),
-            phone_raw=place.get("internationalPhoneNumber")
-            or place.get("nationalPhoneNumber"),
+            phone_raw=place.get("internationalPhoneNumber") or place.get("nationalPhoneNumber"),
             website=place.get("websiteUri"),
             address=place.get("formattedAddress"),
             category=(place.get("primaryTypeDisplayName") or {}).get("text"),

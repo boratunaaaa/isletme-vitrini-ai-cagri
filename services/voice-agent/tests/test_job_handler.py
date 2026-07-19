@@ -139,7 +139,8 @@ async def test_job_stays_active_after_opening_until_real_termination() -> None:
     sip = FakeSIPParticipantAdapter()
     realtime = FakeRealtimeSessionAdapter()
     handler = VoiceAgentJobHandler(
-        _settings(), RuntimeAdapters(api=api, sip=sip, realtime=realtime)  # type: ignore[arg-type]
+        _settings(),
+        RuntimeAdapters(api=api, sip=sip, realtime=realtime),  # type: ignore[arg-type]
     )
     ctx = FakeContext(call_id)
 
@@ -182,7 +183,8 @@ async def test_real_usage_is_reported_when_session_provides_it() -> None:
     sip = FakeSIPParticipantAdapter()
     realtime = FakeRealtimeSessionAdapter()
     handler = VoiceAgentJobHandler(
-        _settings(), RuntimeAdapters(api=api, sip=sip, realtime=realtime)  # type: ignore[arg-type]
+        _settings(),
+        RuntimeAdapters(api=api, sip=sip, realtime=realtime),  # type: ignore[arg-type]
     )
     ctx = FakeContext(call_id)
 
@@ -244,7 +246,8 @@ async def test_max_call_duration_timeout_completes_with_timeout_reason() -> None
     sip = FakeSIPParticipantAdapter()
     realtime = FakeRealtimeSessionAdapter()
     handler = VoiceAgentJobHandler(
-        _settings(), RuntimeAdapters(api=api, sip=sip, realtime=realtime)  # type: ignore[arg-type]
+        _settings(),
+        RuntimeAdapters(api=api, sip=sip, realtime=realtime),  # type: ignore[arg-type]
     )
     ctx = FakeContext(call_id)
 
@@ -267,7 +270,8 @@ async def test_fatal_realtime_error_terminates_job_with_single_completion() -> N
     sip = FakeSIPParticipantAdapter()
     realtime = FakeRealtimeSessionAdapter()
     handler = VoiceAgentJobHandler(
-        _settings(), RuntimeAdapters(api=api, sip=sip, realtime=realtime)  # type: ignore[arg-type]
+        _settings(),
+        RuntimeAdapters(api=api, sip=sip, realtime=realtime),  # type: ignore[arg-type]
     )
     ctx = FakeContext(call_id)
 
@@ -287,7 +291,8 @@ async def test_recoverable_realtime_error_keeps_job_active() -> None:
     sip = FakeSIPParticipantAdapter()
     realtime = FakeRealtimeSessionAdapter()
     handler = VoiceAgentJobHandler(
-        _settings(), RuntimeAdapters(api=api, sip=sip, realtime=realtime)  # type: ignore[arg-type]
+        _settings(),
+        RuntimeAdapters(api=api, sip=sip, realtime=realtime),  # type: ignore[arg-type]
     )
     ctx = FakeContext(call_id)
 
@@ -328,7 +333,8 @@ async def test_sip_busy_failure_carries_differentiated_reason() -> None:
     # status/outcome/retry policy için okuyabilsin diye.
     assert api.completions[0].sip_reason == "busy"
     failed_payloads = [
-        p for e, p in zip(api.events, api.event_payloads, strict=True)
+        p
+        for e, p in zip(api.events, api.event_payloads, strict=True)
         if e == AgentEventType.AGENT_JOB_FAILED
     ]
     assert failed_payloads[0]["sip_reason"] == "busy"
@@ -348,7 +354,8 @@ async def test_sip_no_answer_failure_carries_differentiated_reason() -> None:
     await handler.handle(FakeContext(call_id))
 
     failed_payloads = [
-        p for e, p in zip(api.events, api.event_payloads, strict=True)
+        p
+        for e, p in zip(api.events, api.event_payloads, strict=True)
         if e == AgentEventType.AGENT_JOB_FAILED
     ]
     assert failed_payloads[0]["sip_reason"] == "no_answer"
@@ -368,7 +375,8 @@ async def test_sip_timeout_uses_timeout_reason() -> None:
     await handler.handle(FakeContext(call_id))
 
     failed_payloads = [
-        p for e, p in zip(api.events, api.event_payloads, strict=True)
+        p
+        for e, p in zip(api.events, api.event_payloads, strict=True)
         if e == AgentEventType.AGENT_JOB_FAILED
     ]
     assert failed_payloads[0]["sip_reason"] == "timeout"
@@ -384,7 +392,8 @@ async def test_sip_failure_never_starts_realtime_session() -> None:
     sip.fail = SIPParticipantError("rejected", sip_status_code=603)
     realtime = FakeRealtimeSessionAdapter()
     handler = VoiceAgentJobHandler(
-        _settings(), RuntimeAdapters(api=api, sip=sip, realtime=realtime)  # type: ignore[arg-type]
+        _settings(),
+        RuntimeAdapters(api=api, sip=sip, realtime=realtime),  # type: ignore[arg-type]
     )
 
     await handler.handle(FakeContext(call_id))
@@ -409,7 +418,8 @@ async def test_bootstrap_failure_does_not_start_sip_or_realtime() -> None:
     sip = FakeSIPParticipantAdapter()
     realtime = FakeRealtimeSessionAdapter()
     handler = VoiceAgentJobHandler(
-        _settings(), RuntimeAdapters(api=api, sip=sip, realtime=realtime)  # type: ignore[arg-type]
+        _settings(),
+        RuntimeAdapters(api=api, sip=sip, realtime=realtime),  # type: ignore[arg-type]
     )
 
     await handler.handle(FakeContext(call_id))
@@ -430,7 +440,8 @@ async def test_hangup_called_exactly_once_after_remote_disconnect() -> None:
     sip = FakeSIPParticipantAdapter()
     realtime = FakeRealtimeSessionAdapter()
     handler = VoiceAgentJobHandler(
-        _settings(), RuntimeAdapters(api=api, sip=sip, realtime=realtime)  # type: ignore[arg-type]
+        _settings(),
+        RuntimeAdapters(api=api, sip=sip, realtime=realtime),  # type: ignore[arg-type]
     )
     ctx = FakeContext(call_id)
 
@@ -452,7 +463,8 @@ async def test_transcript_turns_captured_from_conversation_items() -> None:
     sip = FakeSIPParticipantAdapter()
     realtime = FakeRealtimeSessionAdapter()
     handler = VoiceAgentJobHandler(
-        _settings(), RuntimeAdapters(api=api, sip=sip, realtime=realtime)  # type: ignore[arg-type]
+        _settings(),
+        RuntimeAdapters(api=api, sip=sip, realtime=realtime),  # type: ignore[arg-type]
     )
     ctx = FakeContext(call_id)
 

@@ -99,12 +99,10 @@ def test_campaign_suppression_and_prompt_authorization(client, login_as, db_sess
     db_session.add(prompt)
     db_session.commit()
     assert (
-        client.post(f"/api/prompts/{prompt.id}/activate", headers=viewer_headers).status_code
-        == 403
+        client.post(f"/api/prompts/{prompt.id}/activate", headers=viewer_headers).status_code == 403
     )
     assert (
-        client.post(f"/api/prompts/{prompt.id}/activate", headers=owner_headers).status_code
-        == 200
+        client.post(f"/api/prompts/{prompt.id}/activate", headers=owner_headers).status_code == 200
     )
 
 

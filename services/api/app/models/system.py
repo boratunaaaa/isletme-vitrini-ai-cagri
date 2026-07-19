@@ -14,9 +14,7 @@ from app.db.base import Base, UUIDPkMixin
 
 class IntegrationSetting(Base, UUIDPkMixin):
     __tablename__ = "integration_settings"
-    __table_args__ = (
-        UniqueConstraint("provider", "setting_key", name="uq_integration_setting"),
-    )
+    __table_args__ = (UniqueConstraint("provider", "setting_key", name="uq_integration_setting"),)
 
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
     setting_key: Mapped[str] = mapped_column(String(80), nullable=False)

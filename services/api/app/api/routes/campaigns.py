@@ -144,9 +144,7 @@ def update_campaign(
         data["realtime_voice"] = selection.voice
     for field, value in data.items():
         setattr(campaign, field, value)
-    if (
-        campaign.call_end_hour <= campaign.call_start_hour
-    ):
+    if campaign.call_end_hour <= campaign.call_start_hour:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Saat aralığı geçersiz")
     return CampaignOut.model_validate(campaign)
 

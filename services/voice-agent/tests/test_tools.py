@@ -134,7 +134,10 @@ async def test_end_call_safely_triggers_callback_exactly_once_on_success() -> No
         calls += 1
 
     executor = ToolExecutor(
-        call_id=uuid.uuid4(), api=api, events=events, on_end_call_requested=on_end_call  # type: ignore[arg-type]
+        call_id=uuid.uuid4(),
+        api=api,  # type: ignore[arg-type]
+        events=events,
+        on_end_call_requested=on_end_call,
     )
 
     await executor.execute(END_CALL_TOOL_NAME, {"note": "iyi günler"})
@@ -154,7 +157,10 @@ async def test_end_call_safely_callback_not_triggered_when_backend_call_fails() 
         calls += 1
 
     executor = ToolExecutor(
-        call_id=uuid.uuid4(), api=api, events=events, on_end_call_requested=on_end_call  # type: ignore[arg-type]
+        call_id=uuid.uuid4(),
+        api=api,  # type: ignore[arg-type]
+        events=events,
+        on_end_call_requested=on_end_call,
     )
 
     with pytest.raises(ToolExecutionError):
@@ -174,7 +180,10 @@ async def test_other_tools_do_not_trigger_end_call_callback() -> None:
         calls += 1
 
     executor = ToolExecutor(
-        call_id=uuid.uuid4(), api=api, events=events, on_end_call_requested=on_end_call  # type: ignore[arg-type]
+        call_id=uuid.uuid4(),
+        api=api,  # type: ignore[arg-type]
+        events=events,
+        on_end_call_requested=on_end_call,
     )
 
     await executor.execute("mark_interested", {"note": "ok"})

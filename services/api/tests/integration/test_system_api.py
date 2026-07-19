@@ -84,9 +84,7 @@ def test_pricing_list_requires_settings_read(client, login_as, db_session) -> No
     assert owner_response.json()[0]["input_audio_price_per_million"] == "32.0000"
 
 
-def test_pricing_update_only_owner_admin_and_persists_decimal(
-    client, login_as, db_session
-) -> None:
+def test_pricing_update_only_owner_admin_and_persists_decimal(client, login_as, db_session) -> None:
     pricing = _pricing(db_session)
     agent_headers = login_as(role="sales_agent")
     forbidden = client.patch(

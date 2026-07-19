@@ -32,9 +32,7 @@ def now_istanbul() -> datetime:
     return datetime.now(ZoneInfo(get_settings().APP_TIMEZONE))
 
 
-def is_within_call_hours(
-    start_hour: int, end_hour: int, at: datetime | None = None
-) -> bool:
+def is_within_call_hours(start_hour: int, end_hour: int, at: datetime | None = None) -> bool:
     current = at or now_istanbul()
     if current.tzinfo is None:
         current = current.replace(tzinfo=ZoneInfo(get_settings().APP_TIMEZONE))
@@ -104,9 +102,7 @@ def check_limits(db: Session, campaign: Campaign | None) -> None:
         if daily_call_count(db, campaign.id) >= campaign.daily_limit:
             raise CallPolicyError("campaign_daily_limit", "Kampanya günlük limiti doldu.")
         if concurrent_call_count(db, campaign.id) >= campaign.concurrent_call_limit:
-            raise CallPolicyError(
-                "campaign_concurrent_limit", "Kampanya eşzamanlı limiti dolu."
-            )
+            raise CallPolicyError("campaign_concurrent_limit", "Kampanya eşzamanlı limiti dolu.")
 
 
 def check_call_hours(campaign: Campaign | None) -> None:
@@ -124,7 +120,7 @@ def check_call_hours(campaign: Campaign | None) -> None:
 
 # Telephony sonucuna göre tekrar deneme çarpanı (dakika cinsinden taban gecikmeye göre)
 _RETRY_MULTIPLIER: dict[str, float] = {
-    CallStatus.BUSY.value: 0.5,       # meşgulse daha erken dene
+    CallStatus.BUSY.value: 0.5,  # meşgulse daha erken dene
     CallStatus.NO_ANSWER.value: 1.0,
     CallStatus.VOICEMAIL.value: 2.0,  # telesekreterse daha geç dene
     CallStatus.FAILED.value: 1.0,

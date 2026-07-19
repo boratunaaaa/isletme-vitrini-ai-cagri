@@ -559,9 +559,7 @@ def test_complete_without_sip_reason_still_completes_normally(
     dışı) eski davranış değişmemeli."""
     call = _call(db_session, status=CallStatus.AGENT_ACTIVE)
 
-    response = _complete(
-        client, internal_headers, call.id, event_id="c-none", sip_reason=None
-    )
+    response = _complete(client, internal_headers, call.id, event_id="c-none", sip_reason=None)
 
     assert response.status_code == 200
     db_session.refresh(call)

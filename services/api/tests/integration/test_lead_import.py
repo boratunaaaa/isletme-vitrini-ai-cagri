@@ -58,9 +58,7 @@ def test_valid_json_import_english_headers(db_session, clean_db) -> None:
     assert lead.demo_link == "https://demo.example/beta"
 
 
-def test_valid_xlsx_import_skips_blank_rows_and_handles_formula_cells(
-    db_session, clean_db
-) -> None:
+def test_valid_xlsx_import_skips_blank_rows_and_handles_formula_cells(db_session, clean_db) -> None:
     workbook = Workbook()
     sheet = workbook.active
     sheet.append(["Business Name", "Phone", "City", "Notes"])
