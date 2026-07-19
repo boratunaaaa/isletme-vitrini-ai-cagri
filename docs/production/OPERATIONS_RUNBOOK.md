@@ -3,6 +3,15 @@
 Tüm komutlar `compose.production.yml --env-file .env.production` bağlamında
 çalıştırılır; kısayollar için `make <hedef>` kullanılabilir.
 
+## Hızlı teşhis (PHASE_10_OPERATIONS_REPORT.md)
+
+Herhangi bir soruna bakmaya başlamadan önce: `make doctor` — container
+durumu + `/ready` (DB+Redis alt kontrolleri) + son başarılı backup
+zamanlarını TEK komutta gösterir. Ayrıca:
+- `make ready-check` — yalnız `/ready` JSON çıktısı (hangi bağımlılık `not ok`?).
+- `make queue-status` — Celery worker'ın hangi görevleri aktif/reserve
+  tuttuğunu gösterir ("worker job'ı aldı mı?" sorusunun cevabı).
+
 ## Uygulama cevap vermiyor
 
 1. `make prod-health` — hangi servis `unhealthy`/`Restarting`?
@@ -61,6 +70,31 @@ Olası nedenler ve kontroller:
    son çare olarak `redis_data` volume'ünü sıfırlamak veri kaybına yol
    AÇMAZ (yalnız aktif oturumlar/kuyruktaki görevler kaybolur, kullanıcılar
    yeniden giriş yapar).
+
+## Bir çağrı QUEUED'da takılı kaldı / worker job'ı almıyor gibi görünüyor
+
+1. `make queue-status` — `place_call` görevi `active`/`reserved` listesinde
+   görünüyor mu? Görünmüyorsa worker kuyruğu (`calls`) tüketmiyor demektir.
+2. `make prod-logs service=worker` — `celery inspect ping` healthcheck'i
+   `unhealthy` mi (bkz. `make prod-health`)? Worker container'ı restart
+   döngüsünde mi?
+3. **Bilinen tasarım** (`PHASE_8_RESILIENCE_REPORT.md`): `place_call`
+   Celery seviyesinde OTOMATİK RETRY yapmaz (`max_retries=0`) — bir dial
+   denemesi transient bir hatayla başarısız olursa görev tek seferde
+   FAILED'e döner; yeniden arama, kampanya sistemin kendi backoff
+   zamanlamasına (`call_policy.py::compute_next_retry`) bırakılır, elle
+   tetiklenen tekil çağrılar için otomatik yeniden deneme YOKTUR.
+4. Worker gerçekten çökmüşse (OOM/crash) ve görev `task_acks_late=True`
+   sayesinde yeniden teslim edildiyse: **mükerrer gerçek arama riski YOKTUR**
+   — Redis tabanlı bir tek-seferlik işaret (`idempotency_seen`), ikinci
+   teslimatın gerçek SIP dial'ı tekrar denemesini engeller ve çağrıyı
+   `duplicate_dispatch_prevented` nedeniyle güvenli şekilde FAILED'e alır
+   (bkz. `services/api/app/tasks/call_tasks.py`, test:
+   `test_place_call_redelivery_after_successful_dial_prevents_duplicate_real_call`).
+5. En kötü durumda (yukarıdakilerin hiçbiri temizlemediyse): watchdog
+   emniyet süpürmesi (`watchdog_sweep`, her 60s, `MAX_CALL_DURATION_SECONDS
+   + 600` saniyeden eski aktif/kuyruktaki çağrıları zorla FAILED'e alır)
+   en fazla ~15 dakika içinde durumu kendiliğinden temizler.
 
 ## Voice-agent bağlantı kuramıyor
 

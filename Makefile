@@ -8,7 +8,7 @@ AGENT := services/voice-agent
         api worker beat agent web dev lint typecheck test test-py test-e2e build check \
         prod-config prod-build prod-up prod-down prod-logs prod-health prod-migrate \
         prod-bootstrap-admin backup backup-status backup-verify-all restore-smoke-test \
-        prod-destroy-volumes
+        prod-destroy-volumes ready-check queue-status doctor
 
 help:
 	@grep -E '^[a-zA-Z_-]+:' Makefile | sed 's/:.*//' | sort -u
@@ -111,6 +111,21 @@ prod-logs: ## Tüm servislerin loglarını takip et (service=<ad> ile filtrelene
 
 prod-health: ## Tüm servislerin sağlık durumunu göster
 	$(COMPOSE_PROD) ps
+
+ready-check: ## API'nin /ready uç noktasını (DB+Redis alt kontrolleri) container içinden sorgula
+	$(COMPOSE_PROD) exec -T api python -c "import os,urllib.request,sys,json; host=os.environ.get('TRUSTED_HOSTS','127.0.0.1').split(',')[0].strip(); req=urllib.request.Request('http://127.0.0.1:8000/ready', headers={'Host': host}); resp=urllib.request.urlopen(req, timeout=5); print(json.dumps(json.load(resp), indent=2, ensure_ascii=False))"
+
+queue-status: ## Celery worker'ın canlı/reserve/aktif iş durumunu göster (job kuyruğa alındı mı, işleniyor mu)
+	$(COMPOSE_PROD) exec -T worker celery -A app.worker.celery_app inspect active
+	$(COMPOSE_PROD) exec -T worker celery -A app.worker.celery_app inspect reserved
+
+doctor: ## Tek komutla hızlı teşhis: container durumu + /ready + backup yaşı (PHASE_10_OPERATIONS_REPORT.md)
+	@echo "=== Container durumu ==="
+	@$(MAKE) --no-print-directory prod-health
+	@echo; echo "=== /ready (DB+Redis) ==="
+	@$(MAKE) --no-print-directory ready-check
+	@echo; echo "=== Backup durumu ==="
+	@$(MAKE) --no-print-directory backup-status
 
 prod-migrate: ## Tek seferlik, kontrollü migration (birden fazla replika eşzamanlı ÇALIŞTIRMAZ)
 	$(COMPOSE_PROD) run --rm migrate
