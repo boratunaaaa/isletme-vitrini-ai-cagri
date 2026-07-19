@@ -115,13 +115,48 @@ docker compose -f compose.production.yml --env-file .env.production ps
 Beklenen: `postgres`, `redis`, `api`, `frontend`, `caddy`, `worker`, `beat`,
 `voice-agent` → `healthy` (hepsinin gerçek healthcheck'i vardır — `worker`
 `celery inspect ping`, `beat` kendi pidfile'ının canlılığını kontrol eder).
-`voice-agent`'ın healthcheck'i (`--check-config`) yalnız gerekli env
-değişkenlerinin DOLU olduğunu doğrular, LiveKit'e gerçekten bağlanabildiğini
-DEĞİL — credential'lar dolu ama YANLIŞSA container yine `healthy` görünür,
-ancak arka planda LiveKit'e bağlanma denemesi `401` ile başarısız olup
-exponential backoff ile YENİDEN DENER (crash-loop DEĞİL). Gerçek bağlantı
-durumunu `prod-logs service=voice-agent` ile kontrol edin (bkz.
-`OPERATIONS_RUNBOOK.md` "Voice-agent bağlantı kuramıyor").
+
+**`voice-agent` healthcheck'i — ne kanıtlar, ne kanıtlamaz:**
+
+`voice-agent`'ın healthcheck'i **`--check-config` DEĞİLDİR** (eski bir
+yaklaşımdı, `CODEX_REAUDIT_PHASE_6.md`'deki "healthcheck gerçekliği"
+bulgusu üzerine kaldırıldı — yalnız env değişkenlerinin DOLU olduğunu
+doğruluyordu, gerçek worker sürecinin başladığını veya LiveKit'e
+bağlanabildiğini kanıtlamıyordu). Güncel uygulama
+(`infrastructure/docker/voice-agent.Dockerfile`) LiveKit Agents SDK'sının
+kendi worker HTTP sunucusuna (`GET http://127.0.0.1:8081/`) bir istek
+atar — bu, SDK'nın kendi `AgentServer` health endpoint'idir.
+
+Bu ayrımı netleştirmek önemlidir:
+
+- **Docker `HEALTHCHECK` (liveness)**: yalnızca agent proses/SDK worker'ının
+  ayakta olduğunu ve inference executor'ın çökmediğini, VEYA LiveKit'e
+  bağlanma denemesinin kendi retry bütçesini (`max_retry=16`) TAMAMEN
+  tüketmediğini doğrular. SDK bu iki durumdan herhangi birinde `200` döner —
+  yani **hem "gerçekten bağlı" hem de "hâlâ bağlanmaya çalışıyor (retry
+  içinde)" durumlarında container `healthy` görünür.** Yalnızca inference
+  executor çöktüğünde veya 16 retry'nin tamamı tükendiğinde `503` (dolayısıyla
+  `unhealthy`) olur.
+- **Gerçek LiveKit bağlantısı ve çağrı kabul etme (readiness)**: `healthy`
+  durumu TEK BAŞINA bunu KANITLAMAZ. Yanlış/eksik `LIVEKIT_URL` veya
+  `LIVEKIT_API_KEY`/`SECRET` ile bile container, retry bütçesi tükenene kadar
+  `healthy` görünmeye devam eder; arka planda gerçek bağlantı denemesi
+  `401`/timeout gibi hatalarla başarısız olup exponential backoff ile
+  YENİDEN DENER (crash-loop DEĞİL, ama bağlı da DEĞİL).
+
+**Go-live öncesi bu yüzden `healthy` durumuna güvenmek YETERLİ DEĞİLDİR.**
+Ek olarak şunlar yapılmalı:
+
+1. `prod-logs service=voice-agent` ile logları izleyin — tekrarlayan
+   `failed to connect to livekit, retrying...` satırları YERİNE gerçek bir
+   bağlantı/job-ready logu görülmeli (bkz. `OPERATIONS_RUNBOOK.md`
+   "Voice-agent bağlantı kuramıyor").
+2. Gerçek LiveKit projesi + SIP trunk + OpenAI credential'ları girildikten
+   sonra bağlantının fiilen kurulduğu loglardan doğrulanmalı.
+3. `docs/PILOT_RUNBOOK.md`'deki kontrollü test-numarası dispatch/smoke
+   testi çalıştırılmalı — yalnız bu, servisin GERÇEKTEN bir çağrıyı uçtan uca
+   işleyebildiğini kanıtlar. `healthy` durumu tek başına gerçek bir SIP/LiveKit
+   çağrısının yapılabildiğini KANITLAMAZ.
 
 ## 9. Caddy/TLS Kontrolü
 
