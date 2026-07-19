@@ -57,7 +57,10 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               onClick={async () => {
                 setCallError(null);
                 try {
-                  const call = await initiateCall.mutateAsync({ lead_id: lead.id });
+                  const call = await initiateCall.mutateAsync({
+                    lead_id: lead.id,
+                    idempotency_key: crypto.randomUUID(),
+                  });
                   router.push(`/calls/${call.id}`);
                 } catch (err) {
                   setCallError(err instanceof ApiError ? err.message : "Arama başlatılamadı");
