@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.core.locks import idempotency_seen
 from app.core.logging import call_id_var
 from app.db.session import session_scope
 from app.models.call import Call
@@ -50,6 +51,26 @@ def place_call(self: Any, call_id: str) -> None:
 
         if not settings.LIVE_CALLS_ENABLED and call.telephony_provider != "test":
             transition(db, call, CallStatus.CANCELLED, reason="live_calls_disabled")
+            _finalize_terminal(db, call)
+            return
+
+        # NOT (PHASE_8_RESILIENCE_REPORT.md): `task_acks_late=True` +
+        # `worker_prefetch_multiplier=1` altında, worker gerçek SIP dial
+        # İSTEĞİNİ gönderdikten SONRA ama bu `with session_scope()` bloğu
+        # commit edilmeden ÖNCE çökerse (crash/OOM/SIGKILL), Celery görevi
+        # QUEUED durumdaki DB satırıyla YENİDEN teslim eder — bu da
+        # `create_outbound_call`'ın İKİNCİ kez çağrılıp gerçek bir müşteriyi
+        # mükerrer aramasına yol açabilirdi. Redis tabanlı tek-seferlik işaret,
+        # dial denemesini DB transaction'ından bağımsız olarak kalıcılaştırır:
+        # ikinci teslimat, gerçek aramayı asla tekrar denemeden güvenli
+        # şekilde FAILED'e döner.
+        if idempotency_seen(f"dial:{call_id}"):
+            logger.error(
+                "place_call yeniden teslim edildi; dial daha önce denenmiş — "
+                "mükerrer arama riskini önlemek için atlanıyor"
+            )
+            call.error_code = "duplicate_dispatch_prevented"
+            transition(db, call, CallStatus.FAILED, reason="duplicate_dispatch_prevented")
             _finalize_terminal(db, call)
             return
 

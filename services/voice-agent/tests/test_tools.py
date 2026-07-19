@@ -28,8 +28,9 @@ class FakeAPI:
 
 
 class FakeEvents:
-    def __init__(self) -> None:
+    def __init__(self, fail_on: AgentEventType | None = None) -> None:
         self.events: list[AgentEventType] = []
+        self._fail_on = fail_on
 
     async def emit(
         self,
@@ -38,6 +39,8 @@ class FakeEvents:
         *,
         important: bool = False,
     ) -> None:
+        if event_type == self._fail_on:
+            raise RuntimeError("internal API unreachable")
         self.events.append(event_type)
 
     async def flush(self) -> None:
@@ -76,6 +79,36 @@ async def test_tool_failure_emits_failed_event() -> None:
         AgentEventType.TOOL_CALL_STARTED,
         AgentEventType.TOOL_CALL_FAILED,
     ]
+
+
+@pytest.mark.asyncio
+async def test_started_event_emit_failure_is_classified_as_tool_execution_error() -> None:
+    """PHASE_8_RESILIENCE_REPORT.md: TOOL_CALL_STARTED emit'i (important=True,
+    kuyruğu atlayıp HTTP çağrısı yapar) önceden try/except DIŞINDAYDI — kendi
+    hatası sınıflandırılmadan (ToolExecutionError'a çevrilmeden) dışarı
+    sızıyordu ve backend'e hiçbir zaman çağrılmıyordu. Artık aynı diğer
+    başarısızlıklar gibi ToolExecutionError'a dönüşmeli."""
+    api = FakeAPI()
+    events = FakeEvents(fail_on=AgentEventType.TOOL_CALL_STARTED)
+    executor = ToolExecutor(call_id=uuid.uuid4(), api=api, events=events)  # type: ignore[arg-type]
+
+    with pytest.raises(ToolExecutionError):
+        await executor.execute("mark_interested", {"note": "ok"})
+
+    assert api.calls == []
+
+
+@pytest.mark.asyncio
+async def test_failed_event_emit_failure_does_not_mask_original_error() -> None:
+    """FAILED event emit'i de başarısız olabilir (backend tamamen erişilemez) —
+    bu, asıl tool hatasını maskelememeli; yine ToolExecutionError fırlatılmalı."""
+    api = FakeAPI()
+    api.fail = True
+    events = FakeEvents(fail_on=AgentEventType.TOOL_CALL_FAILED)
+    executor = ToolExecutor(call_id=uuid.uuid4(), api=api, events=events)  # type: ignore[arg-type]
+
+    with pytest.raises(ToolExecutionError):
+        await executor.execute("mark_interested", {"note": "ok"})
 
 
 def test_tool_summary_is_not_raw_json() -> None:

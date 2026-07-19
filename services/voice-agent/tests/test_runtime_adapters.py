@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from livekit import api as lk_api
 from livekit.agents import Agent, AgentServer, AgentSession
@@ -199,6 +201,44 @@ async def test_real_realtime_adapter_registers_all_controlled_tools_on_session()
     assert registered_names == expected_names
 
 
+class _RaisingSession:
+    async def start(self, **_kwargs: object) -> None:
+        raise RuntimeError("connection refused")
+
+
+class _HangingSession:
+    async def start(self, **_kwargs: object) -> None:
+        await asyncio.sleep(10)
+
+
+@pytest.mark.asyncio
+async def test_real_realtime_adapter_start_wraps_connection_failure() -> None:
+    """PHASE_8_RESILIENCE_REPORT.md: `LiveKitRealtimeSessionAdapter.start()`
+    gerçek OpenAI realtime bağlantı hatasını `RealtimeSessionError`'a
+    çevirdiğini iddia ediyordu ama hiçbir test bunu doğrulamıyordu (yalnız
+    `FakeRealtimeSessionAdapter` test ediliyordu, o da hiç sarmalama yapmaz)."""
+    from agent.session import RealtimeRuntime
+
+    settings = _real_settings()
+    adapter = LiveKitRealtimeSessionAdapter(settings)
+    runtime = RealtimeRuntime(session=_RaisingSession(), assistant=object(), opening=object())  # type: ignore[arg-type]
+
+    with pytest.raises(RealtimeSessionError, match="connection refused"):
+        await adapter.start(runtime, room=object())
+
+
+@pytest.mark.asyncio
+async def test_real_realtime_adapter_start_wraps_timeout() -> None:
+    from agent.session import RealtimeRuntime
+
+    settings = _real_settings(REALTIME_STARTUP_TIMEOUT_SECONDS=0.05)
+    adapter = LiveKitRealtimeSessionAdapter(settings)
+    runtime = RealtimeRuntime(session=_HangingSession(), assistant=object(), opening=object())  # type: ignore[arg-type]
+
+    with pytest.raises(RealtimeSessionError):
+        await adapter.start(runtime, room=object())
+
+
 def test_real_sip_participant_request_uses_dial_plan_fields() -> None:
     """`CreateSIPParticipantRequest`'in gerçek protobuf alanlarının dial-plan
     verisiyle doğru doldurulduğu — ağ çağrısı yapılmadan — doğrulanır."""
@@ -248,6 +288,11 @@ def test_agent_server_entrypoint_constructs_without_network_call() -> None:
     server = build_server(settings)
 
     assert isinstance(server, AgentServer)
+    # PHASE_8_RESILIENCE_REPORT.md: GRACEFUL_SHUTDOWN_SECONDS önceden hiçbir
+    # yere bağlı değildi (ölü ayar); artık SDK'nın shutdown_process_timeout'una
+    # aktarılıyor — bu, SIGTERM sonrası handle()'ın finally bloğuna tanınan
+    # gerçek süre.
+    assert server._shutdown_process_timeout == settings.GRACEFUL_SHUTDOWN_SECONDS
 
 
 def test_entrypoint_is_picklable_for_job_process_pool() -> None:

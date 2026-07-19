@@ -529,6 +529,17 @@ def build_server(settings: VoiceAgentSettings) -> AgentServer:
         ws_url=settings.LIVEKIT_URL,
         api_key=settings.LIVEKIT_API_KEY.get_secret_value(),
         api_secret=settings.LIVEKIT_API_SECRET.get_secret_value(),
+        # NOT (PHASE_8_RESILIENCE_REPORT.md): `GRACEFUL_SHUTDOWN_SECONDS`
+        # önceden hiçbir yere bağlı DEĞİLDİ (ayarlanmış izlenimi veren ölü bir
+        # ayar). SDK'nın `shutdown_process_timeout`'u — SIGTERM sonrası
+        # `handle()`'ın kendi `finally` bloğunun (transcript/event bridge
+        # drain, realtime session kapatma, SIP hangup) tamamlanması için
+        # tanınan süre — tam olarak bu ayarın anlamıyla eşleşiyor. SDK'nın
+        # `drain_timeout`'u (aktif çağrının TAMAMEN bitmesini bekleme süresi,
+        # varsayılan 1800s) BİLEREK değiştirilmedi: 120s'lik üst sınırı olan
+        # bu ayarı oraya bağlamak, uzun süren gerçek bir görüşmeyi ortasında
+        # zorla kesme riskini artırırdı — mevcut cömert varsayılan daha güvenli.
+        shutdown_process_timeout=settings.GRACEFUL_SHUTDOWN_SECONDS,
     )
     server.rtc_session(entrypoint, agent_name=settings.LIVEKIT_AGENT_NAME)
     return server

@@ -22,18 +22,24 @@ _PHONE_PATTERNS = [
     re.compile(r"\+\d{10,14}"),
     re.compile(r"\b0?5\d{9}\b"),
 ]
-_SECRET_KEY_RE = re.compile(
-    r"(password|secret|token|api[_-]?key|authorization)\s*[=:]\s*\S+", re.IGNORECASE
-)
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# NOT (PHASE_8_RESILIENCE_REPORT.md): eski `_SECRET_KEY_RE` yalnız `\S+`
+# kullandığı için "Authorization: Bearer <token>" biçiminde `Bearer` kelimesini
+# yutup asıl token'ı DIŞARIDA bırakıyordu (boşluk `\S+`'i durduruyor). Ayrıca
+# e-posta ve OpenAI `sk-...` anahtarlarını hiç yakalamıyordu. Voice-agent'ın
+# zaten test edilmiş `agent/redaction.py` desenleriyle tutarlı hale getirildi.
+_BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
+_OPENAI_KEY_RE = re.compile(r"sk-[A-Za-z0-9_\-]{16,}")
+_KV_SECRET_RE = re.compile(r"(?i)\b(token|secret|api[_-]?key|password)\s*[=:]\s*[^\s&,;]+")
 
 
 def redact(text: str) -> str:
     for pattern in _PHONE_PATTERNS:
         text = pattern.sub("[REDACTED_PHONE]", text)
-    text = _SECRET_KEY_RE.sub(
-        lambda m: m.group(0).split(m.group(0)[len(m.group(1))], 1)[0] + "=[REDACTED]",
-        text,
-    )
+    text = _BEARER_RE.sub("Bearer [REDACTED]", text)
+    text = _OPENAI_KEY_RE.sub("[REDACTED_OPENAI_KEY]", text)
+    text = _KV_SECRET_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", text)
+    text = _EMAIL_RE.sub("[REDACTED_EMAIL]", text)
     return text
 
 

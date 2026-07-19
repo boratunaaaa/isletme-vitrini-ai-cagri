@@ -13,7 +13,18 @@ from app.config import get_settings
 
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
-    return create_engine(get_settings().DATABASE_URL, pool_pre_ping=True, pool_size=5)
+    settings = get_settings()
+    return create_engine(
+        settings.DATABASE_URL,
+        pool_pre_ping=True,
+        pool_size=5,
+        # NOT (PHASE_8_RESILIENCE_REPORT.md): `pool_pre_ping` yalnız ÖLÜ bir
+        # bağlantıyı checkout sırasında tespit eder — TAKILI/yavaş bir
+        # sorguyu sınırlamaz. `statement_timeout` (psycopg `options` GUC'u
+        # ile bağlantı seviyesinde ayarlanır) her sorguyu bağımsız olarak
+        # sınırlar; hem web isteklerini hem Celery görevlerini korur.
+        connect_args={"options": f"-c statement_timeout={settings.DB_STATEMENT_TIMEOUT_MS}"},
+    )
 
 
 @lru_cache(maxsize=1)

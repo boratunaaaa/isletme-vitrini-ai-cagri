@@ -218,6 +218,13 @@ services:
       context: .
       dockerfile: services/api/Dockerfile
     restart: *restart-policy
+    # NOT (PHASE_8_RESILIENCE_REPORT.md): Docker'ın varsayılan 10s
+    # stop_grace_period'u, Celery'nin kendi SIGTERM-sonrası "aktif görevi
+    # bitirmeye çalış" davranışını (task_time_limit=600s) fiilen etkisiz
+    # bırakıyordu — 10s sonra SIGKILL gelirse yarım kalan bir `place_call`
+    # görevi, watchdog devreye girene kadar (~15dk) QUEUED'da asılı kalabilir.
+    # task_time_limit'in biraz üzerinde bir değer seçildi.
+    stop_grace_period: 630s
     command: ["celery", "-A", "app.worker.celery_app", "worker", "-l", "info", "-Q", "default,calls", "--concurrency=${WORKER_CONCURRENCY:-2}"]
     environment: *api-env
     depends_on:
@@ -294,6 +301,15 @@ services:
       context: .
       dockerfile: infrastructure/docker/voice-agent.Dockerfile
     restart: *restart-policy
+    # NOT (PHASE_8_RESILIENCE_REPORT.md): Docker'ın varsayılan 10s
+    # stop_grace_period'u, SDK'nın kendi drain mantığından (SIGTERM alınca
+    # aktif görüşmenin bitmesini bekleme) çok daha kısa — yani gerçek bir
+    # deploy/restart, DEVAM EDEN bir görüşmeyi ortasında SIGKILL ile kesebilir.
+    # `MAX_CALL_DURATION_SECONDS` (varsayılan 300s) + kendi `handle()` finally
+    # temizliği için makul bir pay eklendi (`GRACEFUL_SHUTDOWN_SECONDS`,
+    # `agent/job_handler.py::build_server`'da `shutdown_process_timeout`'a
+    # bağlandı — bkz. o dosyadaki not).
+    stop_grace_period: 360s
     environment:
       VOICE_AGENT_ENV: production
       VOICE_AGENT_NAME: isletme-vitrini-voice-agent

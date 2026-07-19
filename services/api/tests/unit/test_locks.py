@@ -3,8 +3,9 @@ from __future__ import annotations
 import time
 
 import pytest
+import redis
 
-from app.core.locks import LockNotAcquired, redis_lock
+from app.core.locks import LockBackendUnavailable, LockNotAcquired, redis_lock
 
 
 def test_redis_lock_acquire_conflict_and_ttl(redis_client) -> None:
@@ -30,6 +31,25 @@ def test_lock_release_only_deletes_own_token(redis_client) -> None:
 
     assert redis_client.eval(script, 1, "lock:owned", "wrong-token") == 0
     assert redis_client.get("lock:owned") is not None
+
+
+def test_redis_lock_acquire_connection_error_raises_backend_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PHASE_8_RESILIENCE_REPORT.md: Redis'e ulaşılamazsa `r.set(...)` bir
+    `redis.exceptions.ConnectionError` fırlatır — bu önceden hiç yakalanmıyor,
+    genel `unhandled_exception_handler`'a düşüp opak bir 500'e dönüşüyordu.
+    Artık ayrık, çağıranın yakalayıp anlamlı bir hataya çevirebileceği
+    `LockBackendUnavailable` fırlatılmalı."""
+
+    class UnreachableRedis:
+        def set(self, *args, **kwargs):
+            raise redis.exceptions.ConnectionError("Connection refused")
+
+    monkeypatch.setattr("app.core.locks.get_redis", lambda: UnreachableRedis())
+
+    with pytest.raises(LockBackendUnavailable), redis_lock("unreachable", ttl_seconds=1):
+        pass
 
 
 def test_lock_release_errors_are_logged(monkeypatch: pytest.MonkeyPatch) -> None:

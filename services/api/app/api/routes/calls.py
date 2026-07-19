@@ -64,11 +64,12 @@ def initiate(
             idempotency_key=payload.idempotency_key,
         )
     except CallPolicyError as exc:
-        status_code = (
-            status.HTTP_403_FORBIDDEN
-            if exc.code in ("live_calls_disabled", "not_in_allowlist", "suppressed")
-            else status.HTTP_409_CONFLICT
-        )
+        if exc.code in ("live_calls_disabled", "not_in_allowlist", "suppressed"):
+            status_code = status.HTTP_403_FORBIDDEN
+        elif exc.code == "lock_backend_unavailable":
+            status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        else:
+            status_code = status.HTTP_409_CONFLICT
         raise HTTPException(status_code, exc.message) from exc
     write_audit(
         db,

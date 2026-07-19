@@ -12,7 +12,7 @@ import hashlib
 import logging
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+psycopg://ivac:ivac@localhost:5432/ivac"
     DATABASE_URL_TEST: str = "postgresql+psycopg://ivac:ivac@localhost:5432/ivac_test"
     REDIS_URL: str = "redis://localhost:6379/0"
+    # NOT (PHASE_8_RESILIENCE_REPORT.md): önceden hiçbir statement/connect
+    # timeout yoktu — `pool_pre_ping` yalnız ÖLÜ bağlantıyı tespit eder,
+    # TAKILI/yavaş bir sorguyu SINIRLAMAZ. Celery `task_time_limit=600`s'in
+    # çok altında, web isteklerini de makul sürede tutan bir varsayılan.
+    DB_STATEMENT_TIMEOUT_MS: int = Field(default=30_000, ge=1_000, le=300_000)
 
     JWT_SECRET: str = ""
     COOKIE_SECRET: str = ""

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.crypto import decrypt_pii
-from app.core.locks import LockNotAcquired, redis_lock
+from app.core.locks import LockBackendUnavailable, LockNotAcquired, redis_lock
 from app.models.call import Call
 from app.models.campaign import Campaign
 from app.models.enums import ACTIVE_CALL_STATUSES, CallStatus, ConversationEngine
@@ -121,6 +121,11 @@ def initiate_call(
         except LockNotAcquired as exc:
             raise CallPolicyError(
                 "lead_locked", "Bu lead için eşzamanlı arama denemesi engellendi."
+            ) from exc
+        except LockBackendUnavailable as exc:
+            raise CallPolicyError(
+                "lock_backend_unavailable",
+                "Arama başlatma şu anda geçici olarak kullanılamıyor; lütfen tekrar deneyin.",
             ) from exc
     finally:
         # Düz metin numara yalnız doğrulama için çözüldü; referansı bırak

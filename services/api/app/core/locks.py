@@ -7,12 +7,29 @@ import secrets
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+import redis
+
 from app.core.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
 
 class LockNotAcquired(Exception):
+    pass
+
+
+class LockBackendUnavailable(Exception):
+    """Redis'e bağlanılamadığı için kilit durumu belirlenemedi.
+
+    NOT (PHASE_8_RESILIENCE_REPORT.md): önceden `r.set(...)`'in fırlattığı
+    `redis.exceptions.ConnectionError` hiçbir yerde yakalanmıyordu — çağıran
+    kod yalnız `LockNotAcquired`'ı bekliyordu, bu yüzden Redis kesintisinde
+    istek genel `unhandled_exception_handler`'a düşüp opak bir 500 dönüyordu.
+    Bu ayrık tip, "kilit başka biri tarafından tutuluyor" (kullanıcı hatası,
+    409) ile "kilit durumu bilinmiyor çünkü backend'e ulaşılamadı" (geçici
+    altyapı hatası, 503 + yeniden deneme önerisi) durumlarını ayırt eder.
+    """
+
     pass
 
 
@@ -26,7 +43,10 @@ def redis_lock(name: str, ttl_seconds: int = 120) -> Iterator[None]:
     r = get_redis()
     key = f"lock:{name}"
     token = secrets.token_hex(16)
-    acquired = r.set(key, token, nx=True, ex=ttl_seconds)
+    try:
+        acquired = r.set(key, token, nx=True, ex=ttl_seconds)
+    except redis.exceptions.RedisError as exc:
+        raise LockBackendUnavailable(name) from exc
     if not acquired:
         raise LockNotAcquired(name)
     try:

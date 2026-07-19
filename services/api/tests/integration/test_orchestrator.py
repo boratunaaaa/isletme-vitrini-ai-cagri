@@ -122,6 +122,28 @@ def test_idempotency_and_active_call_prevent_duplicates(db_session, clean_db) ->
     assert exc.value.code == "call_in_progress"
 
 
+def test_redis_lock_backend_unavailable_maps_to_distinguishable_policy_error(
+    db_session,
+    clean_db,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PHASE_8_RESILIENCE_REPORT.md: Redis'e ulaşılamazsa arama isteği opak bir
+    500 yerine ayırt edilebilir `lock_backend_unavailable` koduyla reddedilmeli."""
+    from app.core.locks import LockBackendUnavailable
+
+    _prompt(db_session)
+    lead = _lead(db_session)
+
+    def _broken_lock(*args, **kwargs):
+        raise LockBackendUnavailable("redis-down")
+
+    monkeypatch.setattr(orchestrator, "redis_lock", _broken_lock)
+
+    with pytest.raises(CallPolicyError) as exc:
+        initiate_call(db_session, lead=lead, selection=_selection(), enqueue=False)
+    assert exc.value.code == "lock_backend_unavailable"
+
+
 def test_suppressed_phone_is_rejected(db_session, clean_db) -> None:
     _prompt(db_session)
     lead = _lead(db_session)

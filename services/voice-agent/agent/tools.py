@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -13,6 +14,8 @@ from agent.errors import ToolExecutionError
 from agent.events import EventSink
 from agent.models import AgentEventType, ToolDefinition, ToolResponse
 from agent.redaction import redact_text, safe_error_message
+
+logger = logging.getLogger(__name__)
 
 END_CALL_TOOL_NAME = "end_call_safely"
 
@@ -169,19 +172,32 @@ class ToolExecutor:
             "occurred_at": datetime.now(UTC).isoformat(),
             **self._normalize_arguments(arguments),
         }
-        await self._events.emit(
-            AgentEventType.TOOL_CALL_STARTED,
-            {"tool_name": tool_name, "tool_call_id": tool_call_id},
-            important=True,
-        )
         try:
-            response = await self._api.call_tool(self._call_id, definition.backend_path, payload)
-        except Exception as exc:
+            # NOT (PHASE_8_RESILIENCE_REPORT.md): STARTED emit'i `important=True`
+            # olduğu için kuyruğu atlayıp doğrudan `send_event` HTTP çağrısı yapar
+            # — bu da başarısız olabilir. Önceden bu emit try/except DIŞINDAYDI,
+            # yani kendi hatası sınıflandırılmadan (ToolExecutionError'a
+            # çevrilmeden) ve FAILED event'i hiç denenmeden dışarı sızıyordu.
             await self._events.emit(
-                AgentEventType.TOOL_CALL_FAILED,
+                AgentEventType.TOOL_CALL_STARTED,
                 {"tool_name": tool_name, "tool_call_id": tool_call_id},
                 important=True,
             )
+            response = await self._api.call_tool(self._call_id, definition.backend_path, payload)
+        except Exception as exc:
+            try:
+                await self._events.emit(
+                    AgentEventType.TOOL_CALL_FAILED,
+                    {"tool_name": tool_name, "tool_call_id": tool_call_id},
+                    important=True,
+                )
+            except Exception:
+                # FAILED event'in kendisi de başarısız olabilir (ör. backend
+                # tamamen erişilemez) — bu, asıl hatayı maskelememeli.
+                logger.warning(
+                    "tool_call_failed_event_emit_failed",
+                    extra={"tool_name": tool_name, "tool_call_id": tool_call_id},
+                )
             raise ToolExecutionError(f"Tool failed: {safe_error_message(exc)}") from exc
         await self._events.emit(
             AgentEventType.TOOL_CALL_COMPLETED,
