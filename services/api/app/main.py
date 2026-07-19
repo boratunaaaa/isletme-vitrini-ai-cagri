@@ -47,10 +47,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    # NOT (PHASE_9_SECURITY_REPORT.md): /docs, /redoc, /openapi.json önceden
+    # uygulama kodunda HİÇ kapatılmıyordu — yalnız Caddy'nin yönlendirme
+    # kuralları (yalnız /api/* ve /health,/ready proxy edilir) bunları
+    # dışarıdan erişilmez kılıyordu. Bu, TEK bir kontrol katmanı demekti;
+    # backend container'ı herhangi bir nedenle (debug, port-forward, altyapı
+    # değişikliği) doğrudan erişilebilir hale gelirse, interaktif API
+    # dokümantasyonu kimlik doğrulaması olmadan açığa çıkardı. Derinlemesine
+    # savunma için production'da uygulama seviyesinde de kapatılır.
     app = FastAPI(
         title="İşletme Vitrini AI Çağrı Merkezi API",
         version="0.1.0",
         lifespan=lifespan,
+        docs_url=None if settings.is_production else "/docs",
+        redoc_url=None if settings.is_production else "/redoc",
+        openapi_url=None if settings.is_production else "/openapi.json",
     )
 
     if settings.trusted_hosts:

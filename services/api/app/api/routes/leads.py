@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import write_audit
 from app.core.crypto import decrypt_pii, encrypt_pii, hash_phone
 from app.core.phone import PhoneValidationError, mask_phone, normalize_phone
+from app.core.ratelimit import RateLimitExceeded, check_rate_limit
 from app.core.rbac import Permission
 from app.deps import client_ip, get_db, require_permission
 from app.models.lead import Lead, LeadNote, LeadTag
@@ -162,7 +163,20 @@ def reveal_phone(
     db: Session = Depends(get_db),
     actor: User = Depends(require_permission(Permission.PHONE_REVEAL)),
 ) -> PhoneRevealResponse:
-    """Tam numara gösterimi: yalnız owner/admin + audit kaydı."""
+    """Tam numara gösterimi: yalnız owner/admin + audit kaydı.
+
+    NOT (PHASE_9_SECURITY_REPORT.md): yetkili ama ele geçirilmiş bir hesabın
+    script ile TÜM veritabanını tek tek numara açığa çıkararak sızdırmasını
+    zorlaştırmak için kullanıcı-başına rate limit uygulanır.
+    """
+    try:
+        check_rate_limit("phone-reveal", str(actor.id), limit=60, window_seconds=60)
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Çok fazla telefon açma isteği; lütfen bekleyin.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
     lead = db.get(Lead, lead_id)
     if lead is None or not lead.phone_ciphertext:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Numara bulunamadı")
@@ -244,13 +258,44 @@ def create_tag(
     return TagOut.model_validate(tag)
 
 
+_FORMULA_TRIGGER_CHARS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value: str) -> str:
+    """CSV/Excel formül enjeksiyonuna (CWE-1236) karşı hücre değerini nötrler.
+
+    NOT (PHASE_9_SECURITY_REPORT.md): `business_name`/`sector`/`city`/
+    `district`/`website`/`demo_link` kullanıcı/import kontrollüdür (manuel
+    PATCH veya toplu import ile gelir). Excel/Sheets, `=`/`+`/`-`/`@` ile
+    başlayan bir hücreyi formül olarak yorumlar — ör. `=HYPERLINK(...)`.
+    Standart OWASP mitigasyonu: tetikleyici karakterden önce görünürlüğü
+    bozmayan bir tek tırnak ekleyip metni düz metin olarak zorlamak.
+    """
+    if value and value[0] in _FORMULA_TRIGGER_CHARS:
+        return "'" + value
+    return value
+
+
 @router.post("/export")
 def export_leads(
     request: Request,
     db: Session = Depends(get_db),
     actor: User = Depends(require_permission(Permission.LEADS_EXPORT)),
 ) -> StreamingResponse:
-    """CSV dışa aktarma — telefonlar MASKELİ (düz metin numara asla export edilmez)."""
+    """CSV dışa aktarma — telefonlar MASKELİ (düz metin numara asla export edilmez).
+
+    NOT (PHASE_9_SECURITY_REPORT.md): tekrarlanan tam-veritabanı export'larını
+    (ucuz DoS + veri sızdırma script'i) zorlaştırmak için kullanıcı-başına
+    rate limit uygulanır — export'lar doğası gereği seyrek yapılan işlemlerdir.
+    """
+    try:
+        check_rate_limit("leads-export", str(actor.id), limit=5, window_seconds=60)
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Çok fazla export isteği; lütfen bekleyin.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
     leads = db.scalars(select(Lead).order_by(Lead.created_at)).all()
     buffer = io.StringIO()
     writer = csv.writer(buffer)
@@ -276,14 +321,14 @@ def export_leads(
         )
         writer.writerow(
             [
-                lead.business_name,
-                lead.sector or "",
-                lead.city or "",
-                lead.district or "",
+                _csv_safe(lead.business_name),
+                _csv_safe(lead.sector or ""),
+                _csv_safe(lead.city or ""),
+                _csv_safe(lead.district or ""),
                 masked,
                 lead.status,
-                lead.website or "",
-                lead.demo_link or "",
+                _csv_safe(lead.website or ""),
+                _csv_safe(lead.demo_link or ""),
                 lead.rating if lead.rating is not None else "",
                 lead.review_count if lead.review_count is not None else "",
             ]

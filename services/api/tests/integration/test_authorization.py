@@ -4,6 +4,7 @@ from app.core.crypto import encrypt_pii, hash_phone
 from app.core.phone import normalize_phone
 from app.models.content import AgentPromptVersion
 from app.models.lead import Lead
+from app.models.ops import DemoRequest
 from app.models.system import AuditLog
 
 
@@ -51,6 +52,21 @@ def test_owner_can_reveal_phone_and_audit_is_written(client, login_as, db_sessio
     assert response.json()["phone_e164"] == "+905321234567"
     audit = db_session.query(AuditLog).filter(AuditLog.action == "leads.phone_reveal").one()
     assert audit.safe_metadata is None
+
+
+def test_reveal_phone_is_rate_limited_per_user(client, login_as, db_session) -> None:
+    """PHASE_9_SECURITY_REPORT.md: ele geçirilmiş yetkili bir hesabın script
+    ile tüm veritabanını tek tek numara açığa çıkararak sızdırmasını
+    zorlaştırmak için kullanıcı-başına 60/60s limit uygulanır."""
+    lead = _lead(db_session)
+    headers = login_as(role="owner")
+
+    for _ in range(60):
+        response = client.post(f"/api/leads/{lead.id}/reveal-phone", headers=headers)
+        assert response.status_code == 200
+
+    limited = client.post(f"/api/leads/{lead.id}/reveal-phone", headers=headers)
+    assert limited.status_code == 429
 
 
 def test_campaign_suppression_and_prompt_authorization(client, login_as, db_session) -> None:
@@ -107,3 +123,25 @@ def test_sales_agent_cannot_manage_users(client, login_as) -> None:
     )
 
     assert response.status_code == 403
+
+
+def test_sales_agent_cannot_reveal_phone_via_demo_wa_link(client, login_as, db_session) -> None:
+    """PHASE_9_SECURITY_REPORT.md: `demo_wa_link` önceden `CALL_INITIATE`
+    gerektiriyordu — bu, `PHONE_REVEAL` yetkisi OLMAYAN `sales_agent`'ın tam
+    açık telefon numarasını farklı-yetkili bir endpoint üzerinden almasına
+    izin veren gerçek bir RBAC sınırı ihlaliydi (dedicated `reveal-phone`
+    doğru şekilde 403 dönüyordu, bu endpoint dönmüyordu)."""
+    lead = _lead(db_session)
+    demo = DemoRequest(lead_id=lead.id)
+    db_session.add(demo)
+    db_session.commit()
+    db_session.refresh(demo)
+
+    sales_headers = login_as(role="sales_agent")
+    response = client.get(f"/api/demo-requests/{demo.id}/wa-link", headers=sales_headers)
+    assert response.status_code == 403
+
+    owner_headers = login_as(role="owner", email="owner-walink@example.test")
+    response = client.get(f"/api/demo-requests/{demo.id}/wa-link", headers=owner_headers)
+    assert response.status_code == 200
+    assert "905321234567" in response.json()["wa_link"]

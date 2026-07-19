@@ -66,7 +66,16 @@ def login(
     db: Session = Depends(get_db),
 ) -> MeResponse:
     ip = client_ip(request) or "unknown"
-    identifier = f"{ip}:{payload.email.lower()}"
+    email = payload.email.lower()
+    identifier = f"{ip}:{email}"
+    # NOT (PHASE_9_SECURITY_REPORT.md): yalnız `{ip}:{email}` anahtarı,
+    # kaynak IP'sini döndüren bir saldırganın her IP için TAZE bir kova/kilit
+    # sayacı almasına izin verir — tek bir bilinen hesabı dağıtık şekilde
+    # brute-force etmek fiilen sınırsız kalır. Hesap-seviyeli (yalnız e-posta)
+    # ikinci bir sayaç, gerçek kullanıcıyı yanlışlıkla kilitleme riskini
+    # düşük tutmak için IP-seviyeli eşikten (10) daha yüksek bir eşikle
+    # (20) çalışır — savunma derinliği, tek başına ANA mekanizma değil.
+    account_identifier = f"account:{email}"
     try:
         check_rate_limit("login", identifier, limit=5, window_seconds=60)
     except RateLimitExceeded as exc:
@@ -75,14 +84,15 @@ def login(
             "Çok fazla deneme; lütfen bekleyin.",
             headers={"Retry-After": str(exc.retry_after)},
         ) from exc
-    if is_login_locked(identifier):
+    if is_login_locked(identifier) or is_login_locked(account_identifier, max_failures=20):
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS, "Hesap geçici olarak kilitlendi (15 dk)."
         )
 
-    user = db.scalars(select(User).where(User.email == payload.email.lower())).first()
+    user = db.scalars(select(User).where(User.email == email)).first()
     if user is None or not verify_password(user.password_hash, payload.password):
         record_login_failure(identifier)
+        record_login_failure(account_identifier)
         # Kullanıcı var/yok bilgisi sızdırılmaz
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "E-posta veya parola hatalı")
     if not user.is_active:
@@ -92,6 +102,7 @@ def login(
         user.password_hash = hash_password(payload.password)
 
     clear_login_failures(identifier)
+    clear_login_failures(account_identifier)
     user.last_login_at = datetime.now(UTC)
     token = create_session(str(user.id), user.role)
     register_session_for_user(token, str(user.id))

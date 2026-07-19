@@ -35,6 +35,32 @@ def test_login_creates_session_and_wrong_password_does_not(
     assert not verify_password(stored.password_hash, "WrongPassword123!")
 
 
+def test_distributed_brute_force_triggers_account_level_lockout(client, create_user) -> None:
+    """PHASE_9_SECURITY_REPORT.md: eskiden yalnız `{ip}:{email}` anahtarı
+    vardı — kaynak IP'sini döndüren bir saldırgan her IP için TAZE bir sayaç
+    aldığı için tek bir bilinen hesabı dağıtık şekilde brute-force etmek
+    fiilen sınırsızdı. Hesap-seviyeli (yalnız e-posta) ikinci bir kilit,
+    HİÇ kullanılmamış yeni bir IP'den bile isteği reddetmeli."""
+    create_user(email="distributed@example.test", password="StrongPassword123!", role="owner")
+
+    for i in range(20):
+        response = client.post(
+            "/api/auth/login",
+            json={"email": "distributed@example.test", "password": "WrongPassword123!"},
+            headers={"X-Forwarded-For": f"203.0.113.{i}"},
+        )
+        assert response.status_code == 401
+
+    # 21. deneme, hiç kullanılmamış TAMAMEN YENİ bir IP'den geliyor ama
+    # hesap-seviyeli sayaç (20 eşiği) tetiklenmeli.
+    locked = client.post(
+        "/api/auth/login",
+        json={"email": "distributed@example.test", "password": "StrongPassword123!"},
+        headers={"X-Forwarded-For": "203.0.113.250"},
+    )
+    assert locked.status_code == 429
+
+
 def test_inactive_user_cannot_login(client, create_user) -> None:
     create_user(email="inactive@example.test", password="StrongPassword123!", is_active=False)
 

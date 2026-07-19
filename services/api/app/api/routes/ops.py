@@ -107,7 +107,14 @@ def demo_wa_link(
     demo_id: uuid.UUID,
     request: Request,
     db: Session = Depends(get_db),
-    actor: User = Depends(require_permission(Permission.CALL_INITIATE)),
+    # NOT (PHASE_9_SECURITY_REPORT.md): önceden `Permission.CALL_INITIATE`
+    # gerektiriyordu — bu, `PHONE_REVEAL` YETKİSİ OLMAYAN `sales_agent`
+    # rolünün (bkz. app/core/rbac.py `_MATRIX`) tam açık telefon numarasını
+    # bu farklı-yetkili endpoint üzerinden almasına izin veriyordu (dedicated
+    # `leads.py::reveal_phone` doğru şekilde PHONE_REVEAL istiyordu). Bu
+    # endpoint'in TEK amacı telefon numarası içeren bir link üretmek olduğu
+    # için doğru yetki PHONE_REVEAL'dir.
+    actor: User = Depends(require_permission(Permission.PHONE_REVEAL)),
 ) -> WaLinkResponse:
     """wa.me linki üretir (manuel gönderim). Numara içerdiği için audit'lenir."""
     demo = db.get(DemoRequest, demo_id)
